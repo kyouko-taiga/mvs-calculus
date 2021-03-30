@@ -233,7 +233,11 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       names.insert(name)
 
       // Update the typing context.
-      gamma[name] = (.let, type)
+      if case .inout(let baseType) = type {
+        gamma[name] = (.var, baseType)
+      } else {
+        gamma[name] = (.let, type)
+      }
     }
 
     // Realize the type of the function's body.
