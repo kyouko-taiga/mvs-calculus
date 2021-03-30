@@ -1,0 +1,25 @@
+{
+  "object": {
+    "pins": [
+      {
+        "package": "Diesel",
+        "repositoryURL": "https://github.com/kyouko-taiga/Diesel.git",
+        "state": {
+          "branch": null,
+          "revision": "5c5473fb4df7bf99d06621f425e35a93a2619dd2",
+          "version": "1.1.0"
+        }
+      },
+      {
+        "package": "swift-argument-parser",
+        "repositoryURL": "https://github.com/apple/swift-argument-parser.git",
+        "state": {
+          "branch": null,
+          "revision": "831ed5e860a70e745bc1337830af4786b2576881",
+          "version": "0.4.1"
+        }
+      }
+    ]
+  },
+  "version": 1
+}

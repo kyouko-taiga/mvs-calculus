@@ -1,0 +1,12 @@
+# Swift Package Manager
+/.build
+/Packages
+
+# Xcode
+/.swiftpm
+
+# macOS
+.DS_Store
+
+# Project-specific settings
+/Playground/**
