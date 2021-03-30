@@ -252,11 +252,20 @@ public struct MVSParser {
       [head] + tail
     })
 
+  lazy var inoutSign = take(.inout)
+    .then(sign)
+    .map({ (head, sign) -> Sign in
+      InoutSign(
+        base: sign,
+        range: head.range.lowerBound ..< sign.range.upperBound)
+    })
+
   public init(source: String) {
     expr.define(postExpr)
     sign.define(typeDeclRefSign
                   .or(arraySign)
                   .or(funcSign)
+                  .or(inoutSign)
                   .or((take(.lParen) << sign) >> take(.rParen)))
   }
 
