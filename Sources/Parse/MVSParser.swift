@@ -55,7 +55,20 @@ public struct MVSParser {
 
   let expr = ForwardParser<Expr, ParserState>()
 
-  lazy var postExpr = preExpr
+  lazy var preExpr = take(.amp).optional
+    .then(postExpr)
+    .map({ (amp, expr) throws -> Expr in
+      guard let head = amp else { return expr }
+
+      guard let path = expr as? Path else {
+        throw ParseError(diagnostic: Diagnostic.expectedPath(expr: expr))
+      }
+      return InoutExpr(
+        path:  path,
+        range: head.range.lowerBound ..< expr.range.upperBound)
+    })
+
+  lazy var postExpr = primaryExpr
     .then(suffix.many)
     .assemble({ (state, tree) -> Expr in
       var (expr, suffixes) = tree
@@ -126,25 +139,14 @@ public struct MVSParser {
 
   }
 
-  lazy var preExpr = take(.amp).optional
-    .then(namePath
-            .or(intExpr)
-            .or(floatExpr)
-            .or(arrayExpr)
-            .or(namePath)
-            .or(bindingExpr)
-            .or(funcExpr)
-            .or((take(.lParen) << expr) >> take(.rParen)))
-    .map({ (amp, expr) throws -> Expr in
-      guard let head = amp else { return expr }
-
-      guard let path = expr as? Path else {
-        throw ParseError(diagnostic: Diagnostic.expectedPath(expr: expr))
-      }
-      return InoutExpr(
-        path:  path,
-        range: head.range.lowerBound ..< expr.range.upperBound)
-    })
+  lazy var primaryExpr = namePath
+    .or(intExpr)
+    .or(floatExpr)
+    .or(arrayExpr)
+    .or(namePath)
+    .or(bindingExpr)
+    .or(funcExpr)
+    .or((take(.lParen) << expr) >> take(.rParen))
 
   let namePath = take(.name)
     .assemble({ (state, name) -> Expr in
@@ -261,7 +263,7 @@ public struct MVSParser {
     })
 
   public init(source: String) {
-    expr.define(postExpr)
+    expr.define(preExpr)
     sign.define(typeDeclRefSign
                   .or(arraySign)
                   .or(funcSign)
