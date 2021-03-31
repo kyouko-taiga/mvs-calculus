@@ -24,6 +24,18 @@ public indirect enum Type: Hashable {
   /// The type of an ill-typed AST node.
   case error
 
+  /// Returns the declaration of the member with the given name, if it exists.
+  public func member(named name: String) -> StructProp? {
+    switch self {
+    case .struct(_, let props):
+      return props.first(where: { $0.name == name })
+    case .inout(let base):
+      return base.member(named: name)
+    default:
+      return nil
+    }
+  }
+
   /// Returns whether the error type occurs in this type expression.
   public var hasError: Bool {
     switch self {

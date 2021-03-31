@@ -475,6 +475,14 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
   // T-[Let|Var]ElemRef.
   public mutating func visit(path: inout ElemPath) -> PathResult {
+    expectedType = expectedType.map({
+      if case .inout(let baseType) = $0 {
+        return .inout(base: .array(base: baseType))
+      } else {
+        return .array(base: $0)
+      }
+    })
+
     let pathMut: MutabilityQualifier
 
     if var base = path.base as? Path {
@@ -510,6 +518,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
   // T-[Let|Var]PropRef.
   public mutating func visit(path: inout PropPath) -> PathResult {
+    expectedType = nil
     let pathMut: MutabilityQualifier
 
     if var base = path.base as? Path {
@@ -517,9 +526,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       let (pathBaseMut, pathBaseType) = base.accept(pathVisitor: &self)
       path.base = base
 
-      if case .struct(_, let props) = pathBaseType,
-         let memberDecl = props.first(where: { $0.name == path.name })
-      {
+      if let memberDecl = pathBaseType.member(named: path.name) {
         pathMut = min(pathBaseMut, memberDecl.mutability)
         path.type = memberDecl.type
       } else {
@@ -531,9 +538,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     } else if path.base.accept(&self) {
       // The base is an expression, for which type checking succeeded.
       pathMut = .let
-      if case .struct(_, let props) = path.base.type,
-         let memberDecl = props.first(where: { $0.name == path.name })
-      {
+      if let memberDecl = path.base.type?.member(named: path.name) {
         path.type = memberDecl.type
       } else {
         context.pointee.report(
