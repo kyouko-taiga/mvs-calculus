@@ -1,5 +1,6 @@
 import AST
 import Basic
+import Diesel
 
 extension Diagnostic {
 
@@ -9,10 +10,40 @@ extension Diagnostic {
       message: "expected path, got expression")
   }
 
+  static func expectedToken(expectedKind: Token.Kind, actual: Token) -> Diagnostic {
+    return Diagnostic(
+      range: actual.range,
+      message: "expected '\(expectedKind)', found '\(actual.kind)'")
+  }
+
+  static func expectedToken(expectedKind: Token.Kind, range: SourceRange) -> Diagnostic {
+    return Diagnostic(
+      range: range,
+      message: "expected '\(expectedKind)'")
+  }
+
   static func invalidLiteral(value: Substring, range: SourceRange) -> Diagnostic {
     return Diagnostic(
       range: range,
       message: "invalid literal value '\(value)'")
+  }
+
+}
+
+extension DiagnosticConsumer {
+
+  /// Consumes and reports a parse error.
+  ///
+  /// - Parameter error: The error to consume.
+  func consume(error: ParseError, at range: SourceRange) {
+    if let diag = error.diagnostic as? Diagnostic {
+      consume(diag)
+    } else {
+      let diag = Diagnostic(
+        range: range,
+        message: error.diagnostic.map(String.init(describing:)) ?? "parse error")
+      consume(diag)
+    }
   }
 
 }

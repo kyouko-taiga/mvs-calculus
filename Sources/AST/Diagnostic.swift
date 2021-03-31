@@ -19,7 +19,7 @@ public struct Diagnostic {
   }
 
   /// The severity of a diagnostic.
-  public enum Level: CustomStringConvertible {
+  public enum Level: String, CustomStringConvertible {
 
     /// An unrecoverable error that prevents compilation.
     case error
@@ -28,10 +28,7 @@ public struct Diagnostic {
     case warning
 
     public var description: String {
-      switch self {
-      case .error   : return "error"
-      case .warning : return "warning"
-      }
+      return rawValue
     }
 
   }

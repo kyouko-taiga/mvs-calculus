@@ -1,4 +1,5 @@
 import AST
+import Basic
 import Diesel
 
 /// A parser.
@@ -8,32 +9,58 @@ public struct MVSParser {
     .then(expr)
     .map(Program.init)
 
-  lazy var structDecl = take(.struct)
-    .then(take(.name))
-    .then(take(.lBrace), combine: { lhs, _ in lhs })
-    .then(bindingDecl.many)
-    .then(take(.rBrace))
+  /// `structDeclHead structDeclBody`
+  lazy var structDecl = (structDeclHead ++ structDeclBody)
     .assemble({ (state, tree) -> StructDecl in
-      let (((head, name), props), tail) = tree
+      let ((head, name), (props, tail)) = tree
       let decl = StructDecl(
-        name: String(name.value(in: state.source)),
+        name: name,
         props: props,
         range: head.range.lowerBound ..< tail.range.upperBound)
 
-      state.knownStructs.insert(decl.name)
+      if name != "<error>" {
+        state.knownStructs.insert(decl.name)
+      }
 
       return decl
     })
 
-  lazy var bindingDecl = take(where: { ($0.kind == .let) || ($0.kind == .var) })
-    .then(take(.name))
-    .then(take(.colon) << sign)
-    .assemble({ (state, tree) throws -> BindingDecl in
-      let ((head, name), sign) = tree
+  /// `'struct' name`
+  lazy var structDeclHead = take(.struct)
+    .then(take(.name)
+            .assemble ({ (state, name) in String(name.value(in: state.source)) })
+            .catch    ({ (error, state) in
+              state.report(error)
+              return .success("<error>", state)
+            }))
 
+  /// `'{' bindingDecl* '}'`
+  lazy var structDeclBody = take(.lBrace)
+    .then(bindingDecl.many, combine: { _, rhs in rhs })
+    .catch({ (error, state) in
+      state.report(error)
+      return .success([], state.dropping(while: { $0.kind != .rBrace }))
+    })
+    .then(take(.rBrace))
+
+  /// `( 'let' | 'var' ) name ':' sign`
+  lazy var bindingDecl = (take(.let).or(take(.var)))
+    .then(take(.name)
+            .assemble ({ (state, name) in String(name.value(in: state.source)) })
+            .catch    ({ (error, state) in
+              state.report(error)
+              return .success("<error>", state)
+            }))
+    .then((take(.colon) << sign)
+            .catch    ({ (error, state) in
+              state.report(error)
+              return .success(ErrorSign(range: state.errorRange), state)
+            }))
+    .map({ (tree) -> BindingDecl in
+      let ((head, name), sign) = tree
       return BindingDecl(
         mutability: head.kind == .let ? .let : .var,
-        name: String(name.value(in: state.source)),
+        name: name,
         sign: sign,
         range: head.range.lowerBound ..< sign.range.upperBound)
     })
@@ -271,33 +298,25 @@ public struct MVSParser {
                   .or((take(.lParen) << sign) >> take(.rParen)))
   }
 
-  public mutating func parse(source: String, consumer: DiagnosticConsumer) -> Program? {
-//    var str = "var p: Pair = Pair(2, 4) in p"
-//    var sta = ParserState(source: str, tokens: Array(AnySequence({ Lexer(source: str) }))[0...])
-//    print(expr.parse(sta))
-
+  public mutating func parse(source: String, diagConsumer: DiagnosticConsumer) -> Program? {
     let tokens = Array(AnySequence({ Lexer(source: source) }))
-    let state = ParserState(source: source, tokens: tokens[0...])
+    let state = ParserState(
+      source: source,
+      tokens: tokens[0...],
+      diagConsumer: diagConsumer)
 
     switch program.parse(state) {
     case .success(let program, let remainder):
       if let next = remainder.tokens.first {
         let diag = Diagnostic(
           range: next.range, message: "unexpected token")
-        consumer.consume(diag)
+        diagConsumer.consume(diag)
       }
 
       return program
 
     case .failure(let error):
-      if let diag = error.diagnostic as? Diagnostic {
-        consumer.consume(diag)
-      } else {
-        let diag = Diagnostic(
-          range: state.source.endIndex ..< state.source.endIndex,
-          message: error.diagnostic.map(String.init(describing:)) ?? "parse error")
-        consumer.consume(diag)
-      }
+      diagConsumer.consume(error: error, at: source.startIndex ..< source.startIndex)
     }
 
     return nil
@@ -317,25 +336,46 @@ struct ParserState {
   /// The names of the structures that have been parsed.
   var knownStructs: Set<String> = []
 
+  /// A diagnostic consumer.
+  var diagConsumer: DiagnosticConsumer
+
+  /// A range suitable to report an error that occurred at the current stream position.
+  var errorRange: SourceRange {
+    return tokens.first?.range ?? (source.endIndex ..< source.endIndex)
+  }
+
+  /// Reports the given parse error.
+  func report(_ error: ParseError) {
+    diagConsumer.consume(error: error, at: errorRange)
+  }
+
+  /// Returns a new state where the tokens satisfying the given predicate have been dropped.
+  func dropping(while predicate: (Token) -> Bool) -> ParserState {
+    var newState = self
+    newState.tokens = newState.tokens.drop(while: predicate)
+    return newState
+  }
+
 }
 
-/// A parser that consumes a single token satisfying some predicate.
-struct TokenConsumer: Diesel.Parser {
+/// A parser that consumes a single token of some specified kind.
+struct TokenKindConsumer: Parser {
 
   typealias Element = Token
 
   typealias Stream = ParserState
 
-  /// A predicate that determines whether or not the given token should be consumed.
-  let predicate: (Token) -> Bool
+  /// The kind of the token to consume.
+  let kind: Token.Kind
 
   func parse(_ state: ParserState) -> ParseResult<Token, ParserState> {
     guard let next = state.tokens.first else {
-      return .error(diagnostic: "empty stream")
+      return .error(
+        diagnostic: Diagnostic.expectedToken(expectedKind: kind, range: state.errorRange))
     }
 
-    guard predicate(next) else {
-      return .error(diagnostic: nil)
+    guard next.kind == kind else {
+      return .error(diagnostic: Diagnostic.expectedToken(expectedKind: kind, actual: next))
     }
 
     var newState = state
@@ -345,10 +385,6 @@ struct TokenConsumer: Diesel.Parser {
 
 }
 
-private func take(_ kind: Token.Kind) -> TokenConsumer {
-  return TokenConsumer(predicate: { $0.kind == kind })
-}
-
-private func take(where predicate: @escaping (Token) -> Bool) -> TokenConsumer {
-  return TokenConsumer(predicate: predicate)
+private func take(_ kind: Token.Kind) -> TokenKindConsumer {
+  return TokenKindConsumer(kind: kind)
 }

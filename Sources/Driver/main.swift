@@ -19,7 +19,7 @@ struct MVS: ParsableCommand {
     context.diagConsumer = console
 
     var parser = MVSParser(source: input)
-    guard var program = parser.parse(source: input, consumer: console) else {
+    guard var program = parser.parse(source: input, diagConsumer: console) else {
       return
     }
 
@@ -29,7 +29,6 @@ struct MVS: ParsableCommand {
       print(checker.visit(&program))
     })
   }
-
 
 }
 
