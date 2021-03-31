@@ -193,7 +193,7 @@ public struct MVSParser {
       return IntExpr(value: value, range: literal.range)
     })
 
-  let floatExpr = take(.int)
+  let floatExpr = take(.float)
     .assemble({ (state, literal) throws -> Expr in
       let string = literal.value(in: state.source)
       guard let value = Double(string) else {
@@ -289,7 +289,7 @@ public struct MVSParser {
         range: head.range.lowerBound ..< sign.range.upperBound)
     })
 
-  public init(source: String) {
+  public init() {
     expr.define(preExpr)
     sign.define(typeDeclRefSign
                   .or(arraySign)
