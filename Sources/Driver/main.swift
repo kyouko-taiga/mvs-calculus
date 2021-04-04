@@ -2,6 +2,7 @@ import Foundation
 import ArgumentParser
 
 import AST
+import CodeGen
 import Parse
 import Sema
 
@@ -18,16 +19,21 @@ struct MVS: ParsableCommand {
     var context = Context()
     context.diagConsumer = console
 
-    var parser = MVSParser(source: input)
+    var parser = MVSParser()
     guard var program = parser.parse(source: input, diagConsumer: console) else {
       return
     }
 
     // Type check the program.
-    context.withUnsafeMutablePointer({ ctx in
+    let isWellTyped = context.withUnsafeMutablePointer({ (ctx) -> Bool in
       var checker = TypeChecker(context: ctx)
-      print(checker.visit(&program))
+      return checker.visit(&program)
     })
+    guard isWellTyped else { return }
+
+    var emitter = try Emitter()
+    let module = try emitter.emit(program: &program)
+    module.dump()
   }
 
 }

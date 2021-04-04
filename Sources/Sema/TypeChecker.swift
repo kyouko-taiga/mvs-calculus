@@ -222,6 +222,8 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       // Realize the parameter's signature.
       let name = expr.params[i].name
       let type = expr.params[i].sign.accept(&self)
+
+      expr.params[i].type = type
       params.append(type)
       isWellTyped = isWellTyped && !type.hasError
 

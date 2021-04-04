@@ -11,6 +11,15 @@
         }
       },
       {
+        "package": "LLVM",
+        "repositoryURL": "https://github.com/llvm-swift/LLVMSwift.git",
+        "state": {
+          "branch": "master",
+          "revision": "071246791bd677e869aba4be694ef1e4d789adfb",
+          "version": null
+        }
+      },
+      {
         "package": "swift-argument-parser",
         "repositoryURL": "https://github.com/apple/swift-argument-parser.git",
         "state": {
