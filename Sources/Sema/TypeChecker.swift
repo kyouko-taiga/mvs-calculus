@@ -519,6 +519,12 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       path.type = .error
     }
 
+    // Type check the index.
+    expectedType = .int
+    if !path.index.accept(&self) {
+      path.type = .error
+    }
+
     return (pathMut, path.type!)
   }
 
