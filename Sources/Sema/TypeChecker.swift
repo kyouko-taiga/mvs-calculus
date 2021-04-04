@@ -141,26 +141,26 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     }
 
     // Determine the expected type of each array element.
-    var expectedBaseType: Type?
-    if case .array(let baseType) = expected {
-      expectedBaseType = baseType
+    var expectedElemType: Type?
+    if case .array(let elemType) = expected {
+      expectedElemType = elemType
     } else {
-      expectedBaseType = nil
+      expectedElemType = nil
     }
 
     // Type check all elements.
     var isWellTyped = true
     for i in 0 ..< expr.elems.count {
-      expectedType = expectedBaseType
+      expectedType = expectedElemType
       isWellTyped = isWellTyped && expr.elems[i].accept(&self)
 
-      if (expectedBaseType == nil) && (expr.elems[i].type != .error) {
-        expectedBaseType = expr.elems[i].type
+      if (expectedElemType == nil) && (expr.elems[i].type != .error) {
+        expectedElemType = expr.elems[i].type
       }
     }
 
     // Make sure the type we inferred is the same type as what was expected.
-    expr.type = Type.array(base: expectedBaseType ?? .error)
+    expr.type = Type.array(elem: expectedElemType ?? .error)
     guard (expected == nil) || (expected == expr.type) else {
       context.pointee.report(
         .typeError(expected: expected!, actual: expr.type!, range: expr.range))
@@ -448,6 +448,12 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     // Type check the path.
     let (_, type) = expr.accept(pathVisitor: &self)
 
+    // Type check the index.
+    expectedType = .int
+    guard expr.index.accept(&self) else {
+      return false
+    }
+
     // Make sure the type we inferred is the same type as what was expected.
     guard (expected == nil) || (expected == expr.type) else {
       context.pointee.report(
@@ -477,9 +483,9 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   public mutating func visit(path: inout ElemPath) -> PathResult {
     expectedType = expectedType.map({
       if case .inout(let baseType) = $0 {
-        return .inout(base: .array(base: baseType))
+        return .inout(base: .array(elem: baseType))
       } else {
-        return .array(base: $0)
+        return .array(elem: $0)
       }
     })
 
@@ -490,9 +496,9 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       let (pathBaseMut, pathBaseType) = base.accept(pathVisitor: &self)
       path.base = base
 
-      if case .array(let baseType) = pathBaseType {
+      if case .array(let elemType) = pathBaseType {
         pathMut = pathBaseMut
-        path.type = baseType
+        path.type = elemType
       } else {
         context.pointee.report(.indexingInNonArrayType(pathBaseType, range: path.range))
         pathMut = .let
@@ -501,8 +507,8 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     } else if path.base.accept(&self) {
       // The base is an expression, for which type checking succeeded.
       pathMut = .let
-      if case .array(let baseType) = path.base.type {
-        path.type = baseType
+      if case .array(let elemType) = path.base.type {
+        path.type = elemType
       } else {
         context.pointee.report(.indexingInNonArrayType(path.base.type!, range: path.range))
         path.type = .error
@@ -574,7 +580,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   }
 
   public mutating func visit(_ sign: inout ArraySign) -> Type {
-    return .array(base: sign.base.accept(&self))
+    return .array(elem: sign.base.accept(&self))
   }
 
   public mutating func visit(_ sign: inout FuncSign) -> Type {

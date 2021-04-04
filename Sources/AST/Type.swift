@@ -12,8 +12,8 @@ public indirect enum Type: Hashable {
 
   /// An array type.
   ///
-  /// - Parameter base: The type of each element.
-  case array(base: Type)
+  /// - Parameter elem: The type of each element.
+  case array(elem: Type)
 
   /// A function type.
   case `func`(params: [Type], output: Type)
@@ -41,8 +41,8 @@ public indirect enum Type: Hashable {
     switch self {
     case .struct(_, let props):
       return props.contains(where: { prop in prop.type.hasError })
-    case .array(let base):
-      return base.hasError
+    case .array(let elem):
+      return elem.hasError
     case .func(let params, let output):
       return params.contains(where: { param in param.hasError }) || output.hasError
     case .inout(let base):
@@ -63,7 +63,7 @@ extension Type: CustomStringConvertible {
     case .int                 : return "Int"
     case .float               : return "Float"
     case .struct(let name, _) : return name
-    case .array(let base)     : return "[\(base)]"
+    case .array(let elem)     : return "[\(elem)]"
     case .inout(let base)     : return "&\(base)"
     case .error               : return "<error>"
 
