@@ -7,9 +7,6 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   public typealias PathResult = (mutability: MutabilityQualifier, type: Type)
   public typealias SignResult = Type
 
-  /// A pointer to the AST context.
-  private let context: UnsafeMutablePointer<Context>
-
   /// The struct context Δ.
   private var delta: [String: Type] = [:]
 
@@ -19,8 +16,11 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   /// The expected type of the next expression to visit.
   private var expectedType: Type?
 
-  public init(context: UnsafeMutablePointer<Context>) {
-    self.context = context
+  /// The consumer that's used to report in-flight diagnostics.
+  private var diagConsumer: DiagnosticConsumer
+
+  public init(diagConsumer: DiagnosticConsumer) {
+    self.diagConsumer = diagConsumer
   }
 
   /// T-Program.
@@ -29,7 +29,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     for i in 0 ..< program.types.count {
       // Check for duplicate declarations.
       guard delta[program.types[i].name] == nil else {
-        context.pointee.report(.duplicateStructDecl(decl: program.types[i]))
+        diagConsumer.consume(.duplicateStructDecl(decl: program.types[i]))
         return false
       }
 
@@ -57,7 +57,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     for i in 0 ..< decl.props.count {
       // Check for duplicate declarations.
       guard !names.contains(decl.props[i].name) else {
-        context.pointee.report(.duplicatePropDecl(decl: decl.props[i]))
+        diagConsumer.consume(.duplicatePropDecl(decl: decl.props[i]))
         return false
       }
 
@@ -101,7 +101,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   public mutating func visit(_ expr: inout IntExpr) -> Bool {
     expr.type = .int
     guard (expectedType == nil) || (expectedType == .int) else {
-      context.pointee.report(
+      diagConsumer.consume(
         .typeError(expected: expectedType!, actual: .int, range: expr.range))
       return false
     }
@@ -113,7 +113,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   public mutating func visit(_ expr: inout FloatExpr) -> Bool {
     expr.type = .float
     guard (expectedType == nil) || (expectedType == .float) else {
-      context.pointee.report(
+      diagConsumer.consume(
         .typeError(expected: expectedType!, actual: .float, range: expr.range))
       return false
     }
@@ -130,7 +130,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     guard !expr.elems.isEmpty else {
       guard case .array = expected else {
         // We don't have enough information to type the expression.
-        context.pointee.report(
+        diagConsumer.consume(
           .emptyArrayLiteralWithoutContext(range: expr.range))
         expr.type = .error
         return false
@@ -162,7 +162,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     // Make sure the type we inferred is the same type as what was expected.
     expr.type = Type.array(elem: expectedElemType ?? .error)
     guard (expected == nil) || (expected == expr.type) else {
-      context.pointee.report(
+      diagConsumer.consume(
         .typeError(expected: expected!, actual: expr.type!, range: expr.range))
       return false
     }
@@ -181,7 +181,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // The number of arguments should be the same as the number of props in the struct.
     guard props.count == expr.args.count else {
-      context.pointee.report(
+      diagConsumer.consume(
         .invalidArgCount(expected: props.count, actual: expr.args.count, range: expr.range))
       return false
     }
@@ -196,7 +196,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     // Make sure the type we inferred is the same type as what was expected.
     expr.type = delta[expr.name]
     guard (expected == nil) || (expected == expr.type) else {
-      context.pointee.report(
+      diagConsumer.consume(
         .typeError(expected: expected!, actual: expr.type!, range: expr.range))
       return false
     }
@@ -229,7 +229,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
       // Check for duplicate parameter declaration.
       guard !names.contains(name) else {
-        context.pointee.report(.duplicateParamDecl(decl: expr.params[i]))
+        diagConsumer.consume(.duplicateParamDecl(decl: expr.params[i]))
         continue
       }
       names.insert(name)
@@ -253,7 +253,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     // Make sure the type we inferred is the same type as what was expected.
     expr.type = .func(params: params, output: outputType)
     guard (expected == nil) || (expected == expr.type) else {
-      context.pointee.report(
+      diagConsumer.consume(
         .typeError(expected: expected!, actual: expr.type!, range: expr.range))
       return false
     }
@@ -271,7 +271,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // The callee must have a function type.
     guard case .func(let params, let output) = expr.callee.type else {
-      context.pointee.report(
+      diagConsumer.consume(
         .callToNonFuncType(expr.callee.type ?? .error, range: expr.callee.range))
       expr.type = .error
       return false
@@ -279,7 +279,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // The number of arguments should be the same as the number of parameters.
     guard params.count == expr.args.count else {
-      context.pointee.report(
+      diagConsumer.consume(
         .invalidArgCount(expected: params.count, actual: expr.args.count, range: expr.range))
       expr.type = .error
       return false
@@ -294,7 +294,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       if case .inout = params[i], let path = (expr.args[i] as? InoutExpr)?.path {
         for other in inoutArgs {
           if mayOverlap(path, other) {
-            context.pointee.report(.exclusiveAccessViolation(range: expr.args[i].range))
+            diagConsumer.consume(.exclusiveAccessViolation(range: expr.args[i].range))
             isWellTyped = false
           }
         }
@@ -305,7 +305,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     // Make sure the type we inferred is the same type as what was expected.
     expr.type = output
     guard (expected == nil) || (expected == expr.type) else {
-      context.pointee.report(
+      diagConsumer.consume(
         .typeError(expected: expected!, actual: expr.type!, range: expr.range))
       return false
     }
@@ -323,7 +323,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // `inout` expressions must have a mutable path.
     guard mutability == .var else {
-      context.pointee.report(.immutableInout(type: baseType, range: expr.path.range))
+      diagConsumer.consume(.immutableInout(type: baseType, range: expr.path.range))
       expr.type = .error
       return false
     }
@@ -331,7 +331,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     // Make sure the type we inferred is the same type as what was expected.
     expr.type = .inout(base: baseType)
     guard (expected == nil) || (expected == expr.type) else {
-      context.pointee.report(
+      diagConsumer.consume(
         .typeError(expected: expected!, actual: expr.type!, range: expr.range))
       return false
     }
@@ -363,7 +363,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // Make sure the type we inferred is the same type as what was expected.
     guard (expected == nil) || (expected == expr.type) else {
-      context.pointee.report(
+      diagConsumer.consume(
         .typeError(expected: expected!, actual: expr.type!, range: expr.range))
       return false
     }
@@ -381,7 +381,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // Targets of assignments should be mutable.
     guard mutability == .var else {
-      context.pointee.report(.immutableLValue(type: lvalueType, range: expr.lvalue.range))
+      diagConsumer.consume(.immutableLValue(type: lvalueType, range: expr.lvalue.range))
       expr.type = .error
       return false
     }
@@ -397,7 +397,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // Make sure the type we inferred is the same type as what was expected.
     guard (expected == nil) || (expected == expr.type) else {
-      context.pointee.report(
+      diagConsumer.consume(
         .typeError(expected: expected!, actual: expr.type!, range: expr.range))
       return false
     }
@@ -418,7 +418,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // Make sure the type we inferred is the same type as what was expected.
     guard (expected == nil) || (expected == expr.type) else {
-      context.pointee.report(
+      diagConsumer.consume(
         .typeError(expected: expected!, actual: expr.type!, range: expr.range))
       return false
     }
@@ -435,7 +435,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // Make sure the type we inferred is the same type as what was expected.
     guard (expected == nil) || (expected == expr.type) else {
-      context.pointee.report(
+      diagConsumer.consume(
         .typeError(expected: expected!, actual: expr.type!, range: expr.range))
       return false
     }
@@ -458,7 +458,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // Make sure the type we inferred is the same type as what was expected.
     guard (expected == nil) || (expected == expr.type) else {
-      context.pointee.report(
+      diagConsumer.consume(
         .typeError(expected: expected!, actual: expr.type!, range: expr.range))
       return false
     }
@@ -473,7 +473,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       pathMut = pair.mutability
       path.type = pair.type
     } else {
-      context.pointee.report(.undefinedBinding(name: path.name, range: path.range))
+      diagConsumer.consume(.undefinedBinding(name: path.name, range: path.range))
       pathMut = .let
       path.type = .error
     }
@@ -502,7 +502,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
         pathMut = pathBaseMut
         path.type = elemType
       } else {
-        context.pointee.report(.indexingInNonArrayType(pathBaseType, range: path.range))
+        diagConsumer.consume(.indexingInNonArrayType(pathBaseType, range: path.range))
         pathMut = .let
         path.type = .error
       }
@@ -512,7 +512,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       if case .array(let elemType) = path.base.type {
         path.type = elemType
       } else {
-        context.pointee.report(.indexingInNonArrayType(path.base.type!, range: path.range))
+        diagConsumer.consume(.indexingInNonArrayType(path.base.type!, range: path.range))
         path.type = .error
       }
     } else {
@@ -544,7 +544,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
         pathMut = min(pathBaseMut, memberDecl.mutability)
         path.type = memberDecl.type
       } else {
-        context.pointee.report(
+        diagConsumer.consume(
           .missingMember(member: path.name, in: pathBaseType, range: path.range))
         pathMut = .let
         path.type = .error
@@ -555,7 +555,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       if let memberDecl = path.base.type?.member(named: path.name) {
         path.type = memberDecl.type
       } else {
-        context.pointee.report(
+        diagConsumer.consume(
           .missingMember(member: path.name, in: path.base.type!, range: path.range))
         path.type = .error
       }
@@ -580,7 +580,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     case "Int"  : sign.type = .int
     case "Float": sign.type = .float
     default:
-      context.pointee.report(.undefinedType(name: sign.name, range: sign.range))
+      diagConsumer.consume(.undefinedType(name: sign.name, range: sign.range))
       sign.type = .error
     }
 

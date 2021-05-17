@@ -14,22 +14,16 @@ struct MVS: ParsableCommand {
   func run() throws {
     let input = try String(contentsOf: inputFile)
 
-    // Create an AST context.
+    // Create a diagnostic consumer.
     let console = Console(source: input)
-    var context = Context()
-    context.diagConsumer = console
 
+    // Parse the program.
     var parser = MVSParser()
-    guard var program = parser.parse(source: input, diagConsumer: console) else {
-      return
-    }
+    guard var program = parser.parse(source: input, diagConsumer: console) else { return }
 
     // Type check the program.
-    let isWellTyped = context.withUnsafeMutablePointer({ (ctx) -> Bool in
-      var checker = TypeChecker(context: ctx)
-      return checker.visit(&program)
-    })
-    guard isWellTyped else { return }
+    var checker = TypeChecker(diagConsumer: console)
+    guard checker.visit(&program) else { return }
 
     var emitter = try Emitter()
     let module = try emitter.emit(program: &program)
