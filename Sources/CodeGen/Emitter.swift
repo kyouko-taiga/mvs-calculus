@@ -15,7 +15,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   public typealias PathValueOrigin = (value: IRValue, type: Type)
 
   /// The machine target for the generated IR.
-  let target: TargetMachine
+  public let target: TargetMachine
 
   /// The builder that is used to generate LLVM IR instructions.
   var builder: IRBuilder!

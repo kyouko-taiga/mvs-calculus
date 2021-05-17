@@ -25,6 +25,7 @@ struct MVS: ParsableCommand {
     var checker = TypeChecker(diagConsumer: console)
     guard checker.visit(&program) else { return }
 
+    // Emit the program's IR.
     var emitter = try Emitter()
     let module = try emitter.emit(program: &program)
     module.dump()

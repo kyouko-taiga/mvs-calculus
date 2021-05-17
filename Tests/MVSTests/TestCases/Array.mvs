@@ -1,0 +1,3 @@
+var a: [Int] = [12] in
+a = [15, 16] in
+a[0] // #!output 15

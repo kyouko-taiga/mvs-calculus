@@ -29,5 +29,8 @@ let package = Package(
     .target(name: "Parse", dependencies: ["AST", "Basic", "Diesel"]),
     .target(name: "Sema", dependencies: ["AST", "Basic"]),
 
-    .testTarget(name: "MVSTests")
+    .testTarget(
+      name: "MVSTests",
+      dependencies: ["AST", "CodeGen", "LLVM", "Parse", "Sema"],
+      resources: [.copy("TestCases")]),
   ])

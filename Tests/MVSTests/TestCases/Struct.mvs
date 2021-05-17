@@ -1,0 +1,10 @@
+struct Pair {
+  var x: Int
+  var y: Int
+} in
+
+var p: Pair = Pair(1, 2) in
+p.x = 3 in
+var q: Pair = p in
+
+q.x // #!output 3
