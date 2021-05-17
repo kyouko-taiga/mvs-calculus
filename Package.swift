@@ -27,5 +27,7 @@ let package = Package(
     .target(name: "Basic"),
     .target(name: "CodeGen", dependencies: ["AST", "Basic", "LLVM"]),
     .target(name: "Parse", dependencies: ["AST", "Basic", "Diesel"]),
-    .target(name: "Sema", dependencies: ["AST", "Basic"])
+    .target(name: "Sema", dependencies: ["AST", "Basic"]),
+
+    .testTarget(name: "MVSTests")
   ])
