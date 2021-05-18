@@ -87,21 +87,19 @@ struct Runtime {
     return fn
   }
 
-  /// The runtime's `array_copy(array_dst, array_src, elem_type)` function.
-  var arrayCopy: Function {
-    if let fn = emitter.module.function(named: "mvs_array_copy") {
+  /// The runtime's `array_uniqu(array_dst, elem_type)` function.
+  var arrayUniq: Function {
+    if let fn = emitter.module.function(named: "mvs_array_uniq") {
       return fn
     }
 
     let arrayPtr = emitter.anyArrayType.ptr
-    let ty = FunctionType([arrayPtr, arrayPtr, emitter.metatypeType.ptr], VoidType())
-    let fn = emitter.builder.addFunction("mvs_array_copy", type: ty)
+    let ty = FunctionType([arrayPtr, emitter.metatypeType.ptr], VoidType())
+    let fn = emitter.builder.addFunction("mvs_array_uniq", type: ty)
     fn.addAttribute(.nounwind , to: .function)
     fn.addAttribute(.nocapture, to: .argument(0))
     fn.addAttribute(.nocapture, to: .argument(1))
     fn.addAttribute(.readonly , to: .argument(1))
-    fn.addAttribute(.nocapture, to: .argument(2))
-    fn.addAttribute(.readonly , to: .argument(2))
     return fn
   }
 

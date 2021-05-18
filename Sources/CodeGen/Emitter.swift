@@ -10,8 +10,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
   /// The value origin of a path.
   ///
-  /// This is as the return type of the path visitor, to indicate whether the origin of the visited
-  /// path starts with an rvalue.
+  /// This is used by path visitors to indicate whether the origin of the visited path starts with
+  /// an rvalue.
   public typealias PathValueOrigin = (value: IRValue, type: Type)
 
   /// The machine target for the generated IR.
@@ -93,7 +93,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
     return builder.createStruct(
       name : "_AnyArray",
-      types: [IntType.int64, IntType.int64, voidPtr])
+      types: [IntType.int64, IntType.int64, PointerType(pointee: IntType.int64), voidPtr])
   }
 
   /// LLVM's `memset` intrinsic (i.e., `llvm.memset.p0i8.i64`).
@@ -285,13 +285,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     copyFn.addAttribute(.alwaysinline , to: .function)
 
     builder.positionAtEnd(of: copyFn.appendBasicBlock(named: "entry"))
-    _ = builder.buildCall(
-      runtime.arrayCopy,
-      args: [
-        builder.buildBitCast(copyFn.parameters[0], type: anyArrayType.ptr),
-        builder.buildBitCast(copyFn.parameters[1], type: anyArrayType.ptr),
-        baseMetatype
-      ])
+    emit(copy: copyFn.parameters[1], type: .array(elem: elemType), to: copyFn.parameters[0])
     builder.buildRetVoid()
 
     // Create the metatype.
@@ -430,7 +424,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
       for (i, capture) in captures.enumerated() {
         let loc = builder.buildStructGEP(dstEnv, type: envType, index: i)
-        emit(init: loc, type: capture.1)
 
         var val = builder.buildStructGEP(srcEnv, type: envType, index: i)
         if !capture.1.isAddressOnly {
@@ -452,32 +445,23 @@ public struct Emitter: ExprVisitor, PathVisitor {
   // MARK: Common routines
   // ----------------------------------------------------------------------------------------------
 
+  /// Zero-initializes the value at the given location.
   func emit(init val: IRValue, type: Type) {
+    let irType: IRType
     switch type {
-    case .struct(name: _, let props):
-      let irType = lower(type)
-      for (i, prop) in props.enumerated() {
-        let loc = builder.buildStructGEP(val, type: irType, index: i)
-        emit(init: loc, type: prop.type)
-      }
-
-    case .array(let elemType):
-      let elemMetatype: IRValue = elemType.isTrivial
-        ? metatypeType.ptr.null()
-        : metatype(of: elemType)
-      _ = builder.buildCall(runtime.arrayInit, args: [val, elemMetatype, i64(0), i64(0)])
-
-    case .func:
-      let size = stride(of: anyClosureType)
-      let buf = builder.buildBitCast(val, type: PointerType.toVoid)
-      _ = builder.buildCall(
-        memset, args: [buf, IntType.int8.constant(0), size, IntType.int1.constant(0)])
-
-    default:
-      break
+    case .struct: irType = lower(type)
+    case .array : irType = anyArrayType
+    case .func  : irType = anyClosureType
+    default     : return
     }
+
+    let size = stride(of: irType)
+    let buf = builder.buildBitCast(val, type: PointerType.toVoid)
+    _ = builder.buildCall(
+      memset, args: [buf, IntType.int8.constant(0), size, IntType.int1.constant(0)])
   }
 
+  /// Drops the given value.
   func emit(drop val: IRValue, type: Type) {
     switch type {
     case .array(let elemType):
@@ -523,12 +507,17 @@ public struct Emitter: ExprVisitor, PathVisitor {
         _ = builder.buildCall(fn, args: [loc, val])
       }
 
-    case .array(let elemType):
-      let elemMetatype: IRValue = elemType.isTrivial
-        ? metatypeType.ptr.null()
-        : metatype(of: elemType)
+    case .array:
+      // _ = builder.buildCall(runtime.arrayCopy, args: [loc, val])
+      let dst = builder.buildBitCast(loc, type: voidPtr)
+      let src = builder.buildBitCast(val, type: voidPtr)
+      _ = builder.buildCall(
+        memcpy, args: [dst, src, stride(of: anyArrayType), IntType.int1.constant(0)])
 
-      _ = builder.buildCall(runtime.arrayCopy, args: [loc, val, elemMetatype])
+      var counterLoc = builder.buildStructGEP(loc, type: anyArrayType, index: 2)
+      counterLoc = builder.buildLoad(counterLoc, type: PointerType(pointee: IntType.int64))
+      let counter = builder.buildLoad(counterLoc, type: IntType.int64)
+      builder.buildStore(builder.buildAdd(counter, i64(1)), to: counterLoc)
 
     case .func:
       let closure = builder.buildBitCast(val, type: anyClosureType.ptr)
@@ -611,7 +600,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       args: [alloca, baseMetatype, i64(expr.elems.count), stride(of: elemIRType)])
 
     // Get the base address of the array.
-    var loc = builder.buildStructGEP(alloca, type: anyArrayType, index: 2)
+    var loc = builder.buildStructGEP(alloca, type: anyArrayType, index: 3)
     loc = builder.buildLoad(loc, type: voidPtr)
     loc = builder.buildBitCast(loc, type: elemIRTypePtr)
 
@@ -690,7 +679,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
       for (i, capture) in captures.enumerated() {
         let loc = builder.buildStructGEP(buf, type: envType!, index: i)
-        emit(init: loc, type: capture.value)
 
         let val = capture.value.isAddressOnly
           ? bindings[capture.key]!
@@ -785,7 +773,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   }
 
   public mutating func visit(_ expr: inout InoutExpr) -> IRValue {
-    let (loc, origin) = expr.path.accept(pathVisitor: &self)
+    let (loc, origin) = uniquify(path: &expr.path)
     assert(origin == nil)
     return loc
   }
@@ -801,7 +789,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       // Move the initializer's value.
       alloca = expr.initializer.accept(&self)
     } else {
-      // Allocate and initializer storage for the binding.
+      // Allocate storage for the binding.
       alloca = addEntryAlloca(type: lower(expr.decl.type!), name: expr.decl.name)
       emit(init: alloca, type: expr.decl.type!)
 
@@ -817,20 +805,29 @@ public struct Emitter: ExprVisitor, PathVisitor {
     let body = expr.body.accept(&self)
 
     // Deinitialize the binding's value.
-    emit(drop: alloca, type: expr.type!)
+    emit(drop: alloca, type: expr.initializer.type!)
 
     // Restore the bindings.
     bindings = oldBindings
     return body
   }
 
+
   public mutating func visit(_ expr: inout AssignExpr) -> IRValue {
-    // Emit the location.
-    let (loc, origin) = expr.lvalue.accept(pathVisitor: &self)
-    assert(origin == nil)
+    // Emit the location, applying copy-on-write if needed.
+    let (loc, origin) = uniquify(path: &expr.lvalue)
+    // let (loc, origin) = expr.lvalue.accept(pathVisitor: &self)
+    assert(origin == nil, "left operand is prefixed by an rvalue")
+
+    // Drop the current value held by the left operand.
+    emit(drop: loc, type: expr.lvalue.type!)
 
     // Emit the assignment.
-    emit(copy: &expr.rvalue, to: loc)
+    if isMovable(expr.rvalue) {
+      emit(move: &expr.rvalue, to: loc)
+    } else {
+      emit(copy: &expr.rvalue, to: loc)
+    }
 
     // Emit the body of the expression.
     return expr.body.accept(&self)
@@ -896,7 +893,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // Emit the array's address.
-    var base = builder.buildStructGEP(pathBase, type: anyArrayType, index: 2)
+    var base = builder.buildStructGEP(pathBase, type: anyArrayType, index: 3)
     base = builder.buildLoad(base, type: voidPtr)
     base = builder.buildBitCast(base, type: elemIRTypePtr)
 
@@ -950,13 +947,72 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return (loc: loc, origin: origin)
   }
 
+  /// Emits a writeable location, uniquifying the base of the path if necessary.
+  ///
+  /// This method is intended to be a drop-in replacement of `visit(path:)` in situations where the
+  /// returned location must be made unique before it is used for a write access.
+  private mutating func uniquify(path: inout Path) -> PathResult {
+    switch path {
+    case is NamePath:
+      return path.accept(pathVisitor: &self)
+    case var elemPath as ElemPath:
+      return uniquify(elemPath: &elemPath)
+    case var propPath as PropPath:
+      return uniquify(propPath: &propPath)
+    default:
+      unreachable()
+    }
+  }
+
+  private mutating func uniquify(elemPath path: inout ElemPath) -> PathResult {
+    // Uniquify the prefix of the base.
+    guard var pathBase = path.base as? Path else { fatalError("path is prefixed by an rvalue") }
+    let (pathBaseLoc, pathOrigin) = uniquify(path: &pathBase)
+    assert(pathOrigin == nil)
+
+    // Uniquify the base array.
+    let elemType = path.type!
+    let elemMetatype: IRValue = elemType.isTrivial
+      ? metatypeType.ptr.null()
+      : metatype(of: elemType)
+    _ = builder.buildCall(runtime.arrayUniq, args: [pathBaseLoc, elemMetatype])
+
+    let elemIRType = lower(elemType)
+    let elemIRTypePtr = elemIRType.ptr
+
+    // Emit the array's address.
+    var base = builder.buildStructGEP(pathBaseLoc, type: anyArrayType, index: 3)
+    base = builder.buildLoad(base, type: voidPtr)
+    base = builder.buildBitCast(base, type: elemIRTypePtr)
+
+    // Emit the address of the selected element.
+    assert(path.index.type == .int)
+    let idx = path.index.accept(&self)
+    let loc = builder.buildInBoundsGEP(base, type: elemIRType, indices: [idx])
+
+    return (loc: loc, origin: nil)
+  }
+
+  private mutating func uniquify(propPath path: inout PropPath) -> PathResult {
+    guard var pathBase = path.base as? Path else { fatalError("path is prefixed by an rvalue") }
+    let (pathBaseLoc, pathOrigin) = uniquify(path: &pathBase)
+    assert(pathOrigin == nil)
+
+    // Emit the address of the selected member.
+    guard case .struct(name: _, let props) = path.base.type else { unreachable() }
+    let i = props.firstIndex(where: { $0.name == path.name })!
+    let loc = builder.buildStructGEP(pathBaseLoc, type: lower(path.base.type!), index: i)
+
+    return (loc: loc, origin: nil)
+  }
+
   // ----------------------------------------------------------------------------------------------
   // MARK: Helpers
   // ----------------------------------------------------------------------------------------------
 
   /// Returns a Boolean value indicating whether the result of the given expression can be moved.
   ///
-  /// If a r-value has an address-only type, then its value  can be moved in assignments rather
+  /// If an rvalue has an address-only type, then its value  can be moved in assignments rather
   /// than copied, thus avoiding unnecessary allocations.
   ///
   /// - Parameter expr: An expression.
