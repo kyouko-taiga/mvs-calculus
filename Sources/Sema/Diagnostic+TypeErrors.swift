@@ -3,6 +3,12 @@ import Basic
 
 extension Diagnostic {
 
+  static func ambiguousOperatorReference(range: SourceRange) -> Diagnostic {
+    return Diagnostic(
+      range: range,
+      message: "ambiguous operator reference")
+  }
+
   static func callToNonFuncType(_ type: Type, range: SourceRange) -> Diagnostic {
     return Diagnostic(
       range: range,
@@ -79,6 +85,14 @@ extension Diagnostic {
     return Diagnostic(
       range: range,
       message: "undefined binding: '\(name)'")
+  }
+
+  static func undefinedOperator(
+    kind: OperExpr.Kind, operands: (lhs: Type, rhs: Type), range: SourceRange
+  ) -> Diagnostic {
+    return Diagnostic(
+      range: range,
+      message: "undefined operator '\(kind)' for operands of type '\(operands)'")
   }
 
   static func undefinedType(name: String, range: SourceRange) -> Diagnostic {

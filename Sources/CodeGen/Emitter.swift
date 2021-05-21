@@ -572,6 +572,91 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
   }
 
+  /// Emits the application of the specified operator on the given operands.
+  func emitApplyOper(
+    kind: OperExpr.Kind,
+    type: Type,
+    lhs : IRValue,
+    rhs : IRValue
+  ) -> IRValue {
+    guard case .func(let params, _) = type else { unreachable() }
+
+    func zext(_ value: IRValue) -> IRValue {
+      return builder.buildZExt(value, type: IntType.int64)
+    }
+
+    switch kind {
+    case .eq:
+      switch params[0] {
+      case .int:
+        return zext(builder.buildICmp(lhs, rhs, .equal))
+      case .float:
+        return zext(builder.buildFCmp(lhs, rhs, .orderedEqual))
+
+      default:
+        // FIXME: Implement equality for user-defined data types.
+        fatalError()
+      }
+
+    case .ne:
+      return zext(builder.buildNot(
+        builder.buildTrunc(
+          emitApplyOper(kind: .eq, type: type, lhs: lhs, rhs: rhs), type: IntType.int1)))
+
+    case .lt:
+      switch params[0] {
+      case .int   : return zext(builder.buildICmp(lhs, rhs, .signedLessThan))
+      case .float : return zext(builder.buildFCmp(lhs, rhs, .orderedLessThan))
+      default     : unreachable()
+      }
+
+    case .le:
+      switch params[0] {
+      case .int   : return zext(builder.buildICmp(lhs, rhs, .signedLessThanOrEqual))
+      case .float : return zext(builder.buildFCmp(lhs, rhs, .orderedLessThanOrEqual))
+      default     : unreachable()
+      }
+
+    case .ge:
+      switch params[0] {
+      case .int   : return zext(builder.buildICmp(lhs, rhs, .signedGreaterThanOrEqual))
+      case .float : return zext(builder.buildFCmp(lhs, rhs, .orderedGreaterThanOrEqual))
+      default     : unreachable()
+      }
+
+    case .gt:
+      switch params[0] {
+      case .int   : return zext(builder.buildICmp(lhs, rhs, .signedGreaterThan))
+      case .float : return zext(builder.buildFCmp(lhs, rhs, .orderedGreaterThan))
+      default     : unreachable()
+      }
+
+    case .add:
+      switch params[0] {
+      case .int, .float : return builder.buildAdd(lhs, rhs)
+      default           : unreachable()
+      }
+
+    case .sub:
+      switch params[0] {
+      case .int, .float : return builder.buildSub(lhs, rhs)
+      default           : unreachable()
+      }
+
+    case .mul:
+      switch params[0] {
+      case .int, .float : return builder.buildMul(lhs, rhs)
+      default           : unreachable()
+      }
+
+    case .div:
+      switch params[0] {
+      case .int, .float : return builder.buildDiv(lhs, rhs)
+      default           : unreachable()
+      }
+    }
+  }
+
   // ----------------------------------------------------------------------------------------------
   // MARK: Codegen
   // ----------------------------------------------------------------------------------------------
@@ -770,6 +855,68 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     return result
+  }
+
+  public mutating func visit(_ expr: inout InfixExpr) -> IRValue {
+    let lhs = expr.lhs.accept(&self)
+    let rhs = expr.rhs.accept(&self)
+    return emitApplyOper(kind: expr.oper.kind, type: expr.oper.type!, lhs: lhs, rhs: rhs)
+  }
+
+  public mutating func visit(_ expr: inout OperExpr) -> IRValue {
+    guard case .func(let params, let output) = expr.type else { unreachable() }
+
+    let closure = addEntryAlloca(type: anyClosureType)
+
+    // Attempt to retrieve the wrapper.
+    let prefix = "_\(expr.kind.rawValue)\(expr.type!.mangled)"
+    if let fn = module.function(named: prefix) {
+      builder.buildStore(
+        builder.buildBitCast(fn, type: PointerType.toVoid),
+        to: builder.buildStructGEP(closure, type: anyClosureType, index: 0))
+      builder.buildStore(
+        PointerType.toVoid.null(),
+        to: builder.buildStructGEP(closure, type: anyClosureType, index: 1))
+      builder.buildStore(
+        module.function(named: "\(prefix).copy")!,
+        to: builder.buildStructGEP(closure, type: anyClosureType, index: 2))
+      builder.buildStore(
+        module.function(named: "\(prefix).drop")!,
+        to: builder.buildStructGEP(closure, type: anyClosureType, index: 3))
+
+      return closure
+    }
+
+    // Wrap the operator in a closure.
+    var fn = builder.addFunction("\(prefix)", type: buildFunctionType(from: params, to: output))
+    fn.linkage = .private
+
+    builder.buildStore(
+      builder.buildBitCast(fn, type: PointerType.toVoid),
+      to: builder.buildStructGEP(closure, type: anyClosureType, index: 0))
+    builder.buildStore(
+      PointerType.toVoid.null(),
+      to: builder.buildStructGEP(closure, type: anyClosureType, index: 1))
+    builder.buildStore(
+      emit(copyFuncForClosure: prefix, captures: [], envType: nil),
+      to: builder.buildStructGEP(closure, type: anyClosureType, index: 2))
+    builder.buildStore(
+      emit(dropFuncForClosure: prefix, captures: [], envType: nil),
+      to: builder.buildStructGEP(closure, type: anyClosureType, index: 3))
+
+    // Emit the function.
+    let oldInsertBlock = builder.insertBlock!
+    defer { builder.positionAtEnd(of: oldInsertBlock) }
+
+    builder.positionAtEnd(of: fn.appendBasicBlock(named: "entry"))
+    builder.buildRet(
+      emitApplyOper(
+        kind: expr.kind,
+        type: expr.type!,
+        lhs : fn.parameters[0],
+        rhs : fn.parameters[1]))
+
+    return closure
   }
 
   public mutating func visit(_ expr: inout InoutExpr) -> IRValue {
