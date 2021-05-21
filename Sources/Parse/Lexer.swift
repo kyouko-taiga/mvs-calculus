@@ -78,7 +78,6 @@ struct Lexer: IteratorProtocol {
     case ",": token.kind = .comma
     case ".": token.kind = .dot
     case ":": token.kind = .colon
-    case "=": token.kind = .equal
     case "&": token.kind = .amp
     case "(": token.kind = .lParen
     case ")": token.kind = .rParen
@@ -86,10 +85,46 @@ struct Lexer: IteratorProtocol {
     case "}": token.kind = .rBrace
     case "[": token.kind = .lBracket
     case "]": token.kind = .rBracket
+    case "+": token.kind = .add
+    case "*": token.kind = .mul
+    case "/": token.kind = .div
+
     case "-":
       if source.suffix(from: index).starts(with: "->") {
         token.kind = .arrow
         index = source.index(after: index)
+      } else {
+        token.kind = .sub
+      }
+
+    case "=":
+      if source.suffix(from: index).starts(with: "==") {
+        token.kind = .eq
+        index = source.index(after: index)
+      } else {
+        token.kind = .assign
+      }
+
+    case "!":
+      if source.suffix(from: index).starts(with: "!=") {
+        token.kind = .ne
+        index = source.index(after: index)
+      }
+
+    case "<":
+      if source.suffix(from: index).starts(with: "<=") {
+        token.kind = .le
+        index = source.index(after: index)
+      } else {
+        token.kind = .lt
+      }
+
+    case ">":
+      if source.suffix(from: index).starts(with: ">=") {
+        token.kind = .ge
+        index = source.index(after: index)
+      } else {
+        token.kind = .gt
       }
 
     default: break

@@ -82,6 +82,39 @@ public struct MVSParser {
 
   let expr = ForwardParser<Expr, ParserState>()
 
+  lazy var cmpExpr = addExpr
+    .then(cmpOperExpr.then(addExpr).many)
+    .map({ (head, tail) -> Expr in
+      tail.reduce(into: head, { (lhs, pair) in
+        let (oper, rhs) = pair
+        lhs = InfixExpr(
+          lhs: lhs, rhs: rhs, oper: oper,
+          range: lhs.range.lowerBound ..< rhs.range.upperBound)
+      })
+    })
+
+  lazy var addExpr = mulExpr
+    .then(addOperExpr.then(mulExpr).many)
+    .map({ (head, tail) -> Expr in
+      tail.reduce(into: head, { (lhs, pair) in
+        let (oper, rhs) = pair
+        lhs = InfixExpr(
+          lhs: lhs, rhs: rhs, oper: oper,
+          range: lhs.range.lowerBound ..< rhs.range.upperBound)
+      })
+    })
+
+  lazy var mulExpr = preExpr
+    .then(mulOperExpr.then(preExpr).many)
+    .map({ (head, tail) -> Expr in
+      tail.reduce(into: head, { (lhs, pair) in
+        let (oper, rhs) = pair
+        lhs = InfixExpr(
+          lhs: lhs, rhs: rhs, oper: oper,
+          range: lhs.range.lowerBound ..< rhs.range.upperBound)
+      })
+    })
+
   lazy var preExpr = take(.amp).optional
     .then(postExpr)
     .map({ (amp, expr) throws -> Expr in
@@ -150,7 +183,7 @@ public struct MVSParser {
   let propSuffix = (take(.dot) << take(.name))
     .map({ (name) -> Suffix in .prop(name: name) })
 
-  lazy var assignSuffix = (take(.equal) << expr)
+  lazy var assignSuffix = (take(.assign) << expr)
     .then(take(.in) << expr)
     .map({ (rhs, body) -> Suffix in .assign(rhs: rhs, body: body) })
 
@@ -173,6 +206,7 @@ public struct MVSParser {
     .or(namePath)
     .or(bindingExpr)
     .or(funcExpr)
+    .or(operExpr)
     .or((take(.lParen) << expr) >> take(.rParen))
 
   let namePath = take(.name)
@@ -215,7 +249,7 @@ public struct MVSParser {
     })
 
   lazy var bindingExpr = bindingDecl
-    .then(take(.equal) << expr)
+    .then(take(.assign) << expr)
     .then(take(.in) << expr)
     .map({ tree -> Expr in
       let ((decl, initializer), body) = tree
@@ -245,6 +279,15 @@ public struct MVSParser {
     .map({ (head, tail) in
       [head] + tail
     })
+
+  lazy var operExpr = cmpOperExpr.or(addOperExpr).or(mulOperExpr)
+    .map({ $0 as Expr })
+
+  let cmpOperExpr = oper(kinds: [.eq, .ne, .lt, .le, .gt, .ge])
+
+  let addOperExpr = oper(kinds: [.add, .sub])
+
+  let mulOperExpr = oper(kinds: [.mul, .div])
 
   let sign = ForwardParser<Sign, ParserState>()
 
@@ -290,7 +333,7 @@ public struct MVSParser {
     })
 
   public init() {
-    expr.define(preExpr)
+    expr.define(cmpExpr)
     sign.define(typeDeclRefSign
                   .or(arraySign)
                   .or(funcSign)
@@ -387,4 +430,43 @@ struct TokenKindConsumer: Parser {
 
 private func take(_ kind: Token.Kind) -> TokenKindConsumer {
   return TokenKindConsumer(kind: kind)
+}
+
+extension OperExpr {
+
+  init?(from token: Token) {
+    switch token.kind {
+    case .eq : self = OperExpr(kind: .eq , range: token.range)
+    case .ne : self = OperExpr(kind: .ne , range: token.range)
+    case .lt : self = OperExpr(kind: .lt , range: token.range)
+    case .le : self = OperExpr(kind: .le , range: token.range)
+    case .gt : self = OperExpr(kind: .gt , range: token.range)
+    case .ge : self = OperExpr(kind: .ge , range: token.range)
+    case .add: self = OperExpr(kind: .add, range: token.range)
+    case .sub: self = OperExpr(kind: .sub, range: token.range)
+    case .mul: self = OperExpr(kind: .mul, range: token.range)
+    case .div: self = OperExpr(kind: .div, range: token.range)
+    default: return nil
+    }
+  }
+
+}
+
+private func oper(kinds: Set<Token.Kind>) -> AnyParser<OperExpr, ParserState> {
+  AnyParser({ state in
+    guard let next = state.tokens.first else {
+      return .error(
+        diagnostic: Diagnostic.expectedOperator(range: state.errorRange))
+    }
+
+    guard kinds.contains(next.kind) else {
+      return .error(
+        diagnostic: Diagnostic.expectedOperator(range: state.errorRange))
+    }
+
+    var newState = state
+    newState.tokens = state.tokens.dropFirst()
+    return .success(OperExpr(from: next)!, newState)
+  })
+
 }
