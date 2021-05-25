@@ -158,6 +158,95 @@ public struct CallExpr: Expr {
 
 }
 
+/// An infix expression.
+public struct InfixExpr: Expr {
+
+  /// The left operand.
+  public var lhs: Expr
+
+  /// The right operand.
+  public var rhs: Expr
+
+  /// The operator.
+  public var oper: OperExpr
+
+  public var range: SourceRange
+
+  public var type: Type?
+
+  public init(lhs: Expr, rhs: Expr, oper: OperExpr, range: SourceRange) {
+    self.lhs = lhs
+    self.rhs = rhs
+    self.oper = oper
+    self.range = range
+  }
+
+  public mutating func accept<V>(_ visitor: inout V) -> V.ExprResult where V: ExprVisitor {
+    visitor.visit(&self)
+  }
+
+}
+
+/// An operator expression.
+public struct OperExpr: Expr {
+
+  /// The kind of an operator.
+  public enum Kind: String {
+
+    case eq, ne
+    case lt, le, ge, gt
+    case add, sub, mul, div
+
+    /// Returns the type of the operator overload given the type of its operands.
+    ///
+    /// - Parameter operandType: The type of the operands.
+    public func type(forOperandsOfType operandType: Type) -> Type? {
+      switch self {
+      case .eq, .ne:
+        return .func(params: [operandType, operandType], output: .int)
+
+      case .lt, .le, .ge, .gt:
+        return (operandType == .int) || (operandType == .float)
+          ? .func(params: [operandType, operandType], output: .int)
+          : nil
+
+      case .add, .sub, .mul, .div:
+        return (operandType == .int) || (operandType == .float)
+          ? .func(params: [operandType, operandType], output: operandType)
+          : nil
+      }
+    }
+
+    /// Returns whether the given candidate is a suitable type for an overload of this operator.
+    ///
+    /// - Parameter candidate: A candidate type.
+    public func mayHaveType(_ candidate: Type) -> Bool {
+      // Infix operators are functions of the form (T, T) -> U.
+      guard case .func(let params, output: _) = candidate else { return false }
+      guard (params.count == 2) && (params[0] == params[1]) else { return false }
+      return candidate == type(forOperandsOfType: params[0])
+    }
+
+  }
+
+  /// The kind of the operator.
+  public var kind: Kind
+
+  public var range: SourceRange
+
+  public var type: Type?
+
+  public init(kind: Kind, range: SourceRange) {
+    self.kind = kind
+    self.range = range
+  }
+
+  public mutating func accept<V>(_ visitor: inout V) -> V.ExprResult where V: ExprVisitor {
+    visitor.visit(&self)
+  }
+
+}
+
 /// An `inout` argument.
 public struct InoutExpr: Expr {
 

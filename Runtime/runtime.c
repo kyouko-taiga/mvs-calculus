@@ -5,28 +5,48 @@
 
 /// A metatype.
 typedef struct {
+
   /// The name of the type.
   const char* name;
+
   /// The size (a.k.a. stride) of the type.
   const int64_t size;
+
   /// The type-erased zero-inititiazer for instances of the type.
+  ///
+  /// If `NULL`, then instances of the type are considered "trivial".
   const void (*init)(void*);
+
   /// The type-erased destructor for instances of the type.
+  ///
+  /// If `NULL`, then instances of the type are considered "trivial".
   const void (*drop)(void*);
+
   /// The type-erased copy function for instances of the type.
+  ///
+  /// If `NULL`, then instances of the type are considered "trivial".
   const void (*copy)(void*, void*);
+
+  /// The type-erased equality function for instances of the type.
+  const int64_t (*equal)(void*, void*);
+
 } mvs_MetaType;
 
 /// A type-erased array.
 typedef struct {
+
   /// The number of elements in the array.
   int64_t count;
+
   /// The capacity of the array's storage, in bytes.
   int64_t capacity;
+
   /// A pointer to the array's reference counter.
   int64_t* refcount;
+
   /// A pointer to the array's storage.
   void* storage;
+
 } mvs_AnyArray;
 
 void* mvs_malloc(int64_t size) {
@@ -56,7 +76,7 @@ void mvs_array_init(mvs_AnyArray* array,
 #ifdef DEBUG
     fprintf(stderr, "  alloc %lli bytes at %p\n", count * size, array->storage);
 #endif
-    if ((elem_type != NULL) && (elem_type->init != NULL)) {
+    if (elem_type->init != NULL) {
       for (size_t i = 0; i < count; ++i) {
         elem_type->init(&array->storage[i * size]);
       }
@@ -73,8 +93,7 @@ void mvs_array_init(mvs_AnyArray* array,
 ///
 /// - Parameters:
 ///   - array: A pointer to the array that should be deinitialized.
-///   - elem_type: A pointer to the metatype of the type of the array's elements. If `NULL`, then
-///     the elements are considered of a trivial type.
+///   - elem_type: A pointer to the metatype of the type of the array's elements.
 void mvs_array_drop(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
 #ifdef DEBUG
   fprintf(stderr, "mvs_array_drop(%p, %p)\n", array, elem_type);
@@ -88,7 +107,7 @@ void mvs_array_drop(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
     return;
   }
 
-  if ((elem_type != NULL) && (elem_type->drop != NULL)) {
+  if (elem_type->drop != NULL) {
     for (size_t i = 0; i < array->count; ++i) {
       elem_type->drop(&array->storage[i * elem_type->size]);
     }
@@ -107,8 +126,7 @@ void mvs_array_drop(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
 ///
 /// - Parameters:
 ///   - array: A pointer to the array to uniquify.
-///   - elem_type: A pointer to the metatype of the type of the array's elements. If `NULL`, then
-///     the elements are considered of a trivial type.
+///   - elem_type: A pointer to the metatype of the type of the array's elements.
 void mvs_array_uniq(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
 #ifdef DEBUG
   fprintf(stderr, "mvs_array_uniq(%p, %p)\n", array, elem_type);
@@ -124,7 +142,7 @@ void mvs_array_uniq(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
 #endif
 
   // Copy the contents of the current storage.
-  if (elem_type == NULL) {
+  if (elem_type->copy == NULL) {
     memcpy(unique_storage, array->storage, array->capacity);
   } else {
     for (size_t i = 0; i < array->count; ++i) {
@@ -140,6 +158,34 @@ void mvs_array_uniq(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
   array->refcount = malloc(sizeof(int64_t));
   *(array->refcount) = 1;
   array->storage = unique_storage;
+}
+
+/// Returns whether the two given arrays are equal, assuming they are of the same type.
+///
+/// - Parameters:
+///   - lhs: An array.
+///   - rhs: Another array.
+///   - elem_type: A pointer to the metatype of the type of the array's elements.
+int64_t mvs_array_equal(const mvs_AnyArray* lhs,
+                        const mvs_AnyArray* rhs,
+                        const mvs_MetaType* elem_type)
+{
+  // Trivial if the arrays point to the same storage.
+  if (lhs->storage == rhs->storage) { return 1; }
+
+  // Check for element-wise equality.
+  if (lhs->count == rhs->count) {
+    for (int64_t i = 0; i < lhs->count; ++i) {
+      void* a = &lhs->storage[i * elem_type->size];
+      void* b = &rhs->storage[i * elem_type->size];
+      if (elem_type->equal(a, b) == 0) {
+        return 0;
+      }
+    }
+    return 1;
+  } else {
+    return 0;
+  }
 }
 
 void mvs_print_i64(int64_t value) {

@@ -1,4 +1,5 @@
 import AST
+import Basic
 
 public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
@@ -311,6 +312,62 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     }
 
     return isWellTyped
+  }
+
+  public mutating func visit(_ expr: inout InfixExpr) -> Bool {
+    // Save the expected type, if any.
+    let expected = expectedType
+
+    // Type check the both operands.
+    expectedType = nil
+    var isWellTyped = expr.lhs.accept(&self)
+    expectedType = nil
+    isWellTyped = isWellTyped && expr.rhs.accept(&self)
+
+    // Infer the type of the operator.
+    guard expr.lhs.type == expr.rhs.type else {
+      diagConsumer.consume(
+        .undefinedOperator(
+          kind: expr.oper.kind,
+          operands: (expr.lhs.type!, expr.rhs.type!),
+          range: expr.oper.range))
+      expr.type = .error
+      return false
+    }
+
+    guard let operType = expr.oper.kind.type(forOperandsOfType: expr.lhs.type!) else {
+      diagConsumer.consume(
+        .undefinedOperator(
+          kind: expr.oper.kind,
+          operands: (expr.lhs.type!, expr.rhs.type!),
+          range: expr.oper.range))
+      expr.type = .error
+      return false
+    }
+
+    guard case .func(params: _, output: let output) = operType else { unreachable() }
+    expr.oper.type = operType
+    expr.type = output
+    guard (expected == nil) || (expected == expr.type) else {
+      diagConsumer.consume(
+        .typeError(expected: expected!, actual: expr.type!, range: expr.range))
+      return false
+    }
+
+    return isWellTyped
+  }
+
+  public mutating func visit(_ expr: inout OperExpr) -> Bool {
+    guard let expected = expectedType,
+          expr.kind.mayHaveType(expected)
+    else {
+      diagConsumer.consume(.ambiguousOperatorReference(range: expr.range))
+      expr.type = .error
+      return false
+    }
+
+    expr.type = expected
+    return true
   }
 
   public mutating func visit(_ expr: inout InoutExpr) -> Bool {

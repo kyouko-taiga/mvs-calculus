@@ -22,6 +22,12 @@ extension Diagnostic {
       message: "expected '\(expectedKind)'")
   }
 
+  static func expectedOperator(range: SourceRange) -> Diagnostic {
+    return Diagnostic(
+      range: range,
+      message: "expected operator")
+  }
+
   static func invalidLiteral(value: Substring, range: SourceRange) -> Diagnostic {
     return Diagnostic(
       range: range,

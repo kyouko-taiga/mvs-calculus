@@ -39,9 +39,19 @@ public struct Token {
     case comma
     case dot
     case colon
-    case equal
+    case assign
     case amp
     case arrow
+    case eq
+    case ne
+    case lt
+    case le
+    case gt
+    case ge
+    case add
+    case sub
+    case mul
+    case div
     case lParen
     case rParen
     case lBrace

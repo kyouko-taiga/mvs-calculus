@@ -1,0 +1,4 @@
+struct A { var x: Int } in
+struct B { var a: A } in
+
+B(A(1)) == B(A(1)) // #!output 1
