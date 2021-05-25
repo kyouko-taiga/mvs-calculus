@@ -87,7 +87,7 @@ struct Runtime {
     return fn
   }
 
-  /// The runtime's `array_uniqu(array_dst, elem_type)` function.
+  /// The runtime's `array_uniq(array_dst, elem_type)` function.
   var arrayUniq: Function {
     if let fn = emitter.module.function(named: "mvs_array_uniq") {
       return fn
@@ -100,6 +100,23 @@ struct Runtime {
     fn.addAttribute(.nocapture, to: .argument(0))
     fn.addAttribute(.nocapture, to: .argument(1))
     fn.addAttribute(.readonly , to: .argument(1))
+    return fn
+  }
+
+  /// The runtime's `array_equal(lhs, rhs, elem_type)` function.
+  var arrayEqual: Function {
+    if let fn = emitter.module.function(named: "mvs_array_equal") {
+      return fn
+    }
+
+    let arrayPtr = emitter.anyArrayType.ptr
+    let ty = FunctionType([arrayPtr, arrayPtr, emitter.metatypeType.ptr], IntType.int64)
+    let fn = emitter.builder.addFunction("mvs_array_equal", type: ty)
+    fn.addAttribute(.nounwind , to: .function)
+    for i in 0 ..< 3 {
+      fn.addAttribute(.nocapture, to: .argument(i))
+      fn.addAttribute(.readonly , to: .argument(i))
+    }
     return fn
   }
 
