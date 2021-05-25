@@ -15,6 +15,8 @@ typedef struct {
   const void (*drop)(void*);
   /// The type-erased copy function for instances of the type.
   const void (*copy)(void*, void*);
+  /// The type-erased equality function for instances of the type.
+  const int64_t (*equal)(void*, void*);
 } mvs_MetaType;
 
 /// A type-erased array.

@@ -44,6 +44,9 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// The (lowered) type of a type-erared copy function.
   var anyCopyFuncType = FunctionType([voidPtr, voidPtr], VoidType())
 
+  /// The (lowered) type of a type-erared equality function.
+  var anyEqualityFuncType = FunctionType([voidPtr, voidPtr], IntType.int64)
+
   /// The (lowered) type of a metatype.
   var metatypeType: StructType {
     if let type = module.type(named: "_Metatype") {
@@ -62,6 +65,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
         anyDropFuncType.ptr,
         // The type-erased copy function for instances of the type.
         anyCopyFuncType.ptr,
+        // The type-erased equality function for instances of the type.
+        anyEqualityFuncType.ptr,
       ])
   }
 
@@ -224,6 +229,20 @@ public struct Emitter: ExprVisitor, PathVisitor {
       ])
     builder.buildRetVoid()
 
+    // Create the type's equality function.
+    var equalityFn = builder.addFunction("\(decl.name).te_equal", type: anyEqualityFuncType)
+    equalityFn.linkage = .private
+    equalityFn.addAttribute(.alwaysinline , to: .function)
+
+    builder.positionAtEnd(of: equalityFn.appendBasicBlock(named: "entry"))
+    builder.buildRet(
+      builder.buildCall(
+        emit(equalityFuncFor: decl, irType: irType),
+        args: [
+          builder.buildBitCast(equalityFn.parameters[0], type: irType.ptr),
+          builder.buildBitCast(equalityFn.parameters[1], type: irType.ptr)
+        ]))
+
     // Create the metatype.
     return builder.addGlobal(
       "\(decl.name).Type", initializer: metatypeType.constant(
@@ -233,6 +252,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
           initFn ?? anyInitFuncType.ptr.null(),
           dropFn ?? anyDropFuncType.ptr.null(),
           copyFn,
+          equalityFn,
         ]))
   }
 
@@ -297,6 +317,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
           initFn,
           dropFn,
           copyFn,
+          anyEqualityFuncType.ptr.null(),
         ]))
   }
 
@@ -331,6 +352,43 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     builder.buildRetVoid()
+    return fn
+  }
+
+  func emit(equalityFuncFor decl: StructDecl, irType: StructType) -> Function {
+    guard case .struct(name: _, let props) = decl.type else { unreachable() }
+
+    // Save the builder's current insertion block to restore at the end.
+    let oldInsertBlock = builder.insertBlock
+    defer { oldInsertBlock.map(builder.positionAtEnd(of:)) }
+
+    let irTypePtr = irType.ptr
+    var fn = builder.addFunction(
+      decl.name + ".equal", type: FunctionType([irTypePtr, irTypePtr], IntType.int64))
+    fn.linkage = .private
+    builder.positionAtEnd(of: fn.appendBasicBlock(named: "entry"))
+
+    let neBlock = fn.appendBasicBlock(named: "ne")
+    for (i, prop) in props.enumerated() {
+      // Extract both operands.
+      var lhs = builder.buildStructGEP(fn.parameters[0], type: irType, index: i)
+      var rhs = builder.buildStructGEP(fn.parameters[1], type: irType, index: i)
+      if !prop.type.isAddressOnly {
+        lhs = builder.buildLoad(lhs, type: lower(prop.type))
+        rhs = builder.buildLoad(rhs, type: lower(prop.type))
+      }
+
+      // Bail out if we found a difference.
+      let eqBlock = fn.appendBasicBlock(named: "eq")
+      let test = emitAreEqual(lhs: lhs, rhs: rhs, type: prop.type)
+      builder.buildCondBr(condition: test, then: eqBlock, else: neBlock)
+      builder.positionAtEnd(of: eqBlock)
+    }
+
+    builder.buildRet(i64(1))
+
+    builder.positionAtEnd(of: neBlock)
+    builder.buildRet(i64(0))
     return fn
   }
 
@@ -572,6 +630,26 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
   }
 
+  /// Emits an equality check between the two given operands.
+  func emitAreEqual(lhs: IRValue, rhs: IRValue, type: Type) -> IRValue {
+    switch type {
+    case .int:
+      return builder.buildICmp(lhs, rhs, .equal)
+
+    case .float:
+      return builder.buildFCmp(lhs, rhs, .orderedEqual)
+
+    case .struct(let name, props: _):
+      let fn = module.function(named: name + ".equal")!
+      let eq = builder.buildCall(fn, args: [lhs, rhs])
+      return builder.buildTrunc(eq, type: IntType.int1)
+
+    default:
+      // FIXME: Implement equality for user-defined data types.
+      fatalError()
+    }
+  }
+
   /// Emits the application of the specified operator on the given operands.
   func emitApplyOper(
     kind: OperExpr.Kind,
@@ -587,21 +665,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     switch kind {
     case .eq:
-      switch params[0] {
-      case .int:
-        return zext(builder.buildICmp(lhs, rhs, .equal))
-      case .float:
-        return zext(builder.buildFCmp(lhs, rhs, .orderedEqual))
-
-      default:
-        // FIXME: Implement equality for user-defined data types.
-        fatalError()
-      }
+      return zext(emitAreEqual(lhs: lhs, rhs: rhs, type: params[0]))
 
     case .ne:
-      return zext(builder.buildNot(
-        builder.buildTrunc(
-          emitApplyOper(kind: .eq, type: type, lhs: lhs, rhs: rhs), type: IntType.int1)))
+      return zext(builder.buildNot(emitAreEqual(lhs: lhs, rhs: rhs, type: params[0])))
 
     case .lt:
       switch params[0] {
