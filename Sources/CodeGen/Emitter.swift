@@ -86,6 +86,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
       FunctionType([type.ptr, type.ptr], VoidType()).ptr,
       // The drop function.
       FunctionType([type.ptr], VoidType()).ptr,
+      // The equality function.
+      FunctionType([type.ptr, type.ptr], IntType.int64).ptr,
     ])
 
     return type
@@ -499,6 +501,71 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return fn
   }
 
+  func emit(
+    equalityFuncForClosure prefix: String,
+    captures: [(String, Type)],
+    envType: StructType?
+  ) -> Function {
+    // Save the builder's current insertion block to restore them at the end.
+    let oldInsertBlock = builder.insertBlock!
+    defer { builder.positionAtEnd(of: oldInsertBlock) }
+
+    // Create the equality function.
+    var fn = builder.addFunction(
+      "\(prefix).equal",
+      type: FunctionType([anyClosureType.ptr, anyClosureType.ptr], IntType.int64))
+    fn.linkage = .private
+    builder.positionAtEnd(of: fn.appendBasicBlock(named: "entry"))
+
+    // Test whether the lifted closure pointers are equal.
+    let lhsFn = builder.buildLoad(
+      builder.buildStructGEP(fn.parameters[0], type: anyClosureType, index: 0), type: voidPtr)
+    let rhsFn = builder.buildLoad(
+      builder.buildStructGEP(fn.parameters[1], type: anyClosureType, index: 0), type: voidPtr)
+    let test = builder.buildICmp(lhsFn, rhsFn, .equal)
+
+    guard let envType = envType else {
+      builder.buildRet(zext(test))
+      return fn
+    }
+
+    let neBlock = fn.appendBasicBlock(named: "ne")
+    let eqBlock = fn.appendBasicBlock(named: "eq")
+    builder.buildCondBr(condition: test, then: eqBlock, else: neBlock)
+    builder.positionAtEnd(of: eqBlock)
+
+    // Test for environment equality, assuming environements must have the same type.
+    var lhsEnv = builder.buildStructGEP(fn.parameters[0], type: anyClosureType, index: 1)
+    lhsEnv = builder.buildLoad(lhsEnv, type: voidPtr)
+    lhsEnv = builder.buildBitCast(lhsEnv, type: envType.ptr)
+
+    var rhsEnv = builder.buildStructGEP(fn.parameters[1], type: anyClosureType, index: 1)
+    rhsEnv = builder.buildLoad(rhsEnv, type: voidPtr)
+    rhsEnv = builder.buildBitCast(rhsEnv, type: envType.ptr)
+
+    for (i, capture) in captures.enumerated() {
+      // Extract both operands.
+      var lhs = builder.buildStructGEP(lhsEnv, type: envType, index: i)
+      var rhs = builder.buildStructGEP(rhsEnv, type: envType, index: i)
+      if !capture.1.isAddressOnly {
+        lhs = builder.buildLoad(lhs, type: lower(capture.1))
+        rhs = builder.buildLoad(rhs, type: lower(capture.1))
+      }
+
+      // Bail out if we found a difference.
+      let eqBlock = fn.appendBasicBlock(named: "eq")
+      let test = emitAreEqual(lhs: lhs, rhs: rhs, type: capture.1)
+      builder.buildCondBr(condition: test, then: eqBlock, else: neBlock)
+      builder.positionAtEnd(of: eqBlock)
+    }
+
+    builder.buildRet(i64(1))
+
+    builder.positionAtEnd(of: neBlock)
+    builder.buildRet(i64(0))
+    return fn
+  }
+
   // ----------------------------------------------------------------------------------------------
   // MARK: Common routines
   // ----------------------------------------------------------------------------------------------
@@ -644,6 +711,15 @@ public struct Emitter: ExprVisitor, PathVisitor {
       let eq = builder.buildCall(fn, args: [lhs, rhs])
       return builder.buildTrunc(eq, type: IntType.int1)
 
+    case .func:
+      let lhs = builder.buildBitCast(lhs, type: anyClosureType.ptr)
+      let rhs = builder.buildBitCast(rhs, type: anyClosureType.ptr)
+      let equalityFn = builder.buildLoad(
+        builder.buildStructGEP(lhs, type: anyClosureType, index: 4),
+        type: FunctionType([anyClosureType.ptr, anyClosureType.ptr], IntType.int64).ptr)
+
+      return builder.buildCall(equalityFn, args: [lhs, rhs])
+
     default:
       // FIXME: Implement equality for user-defined data types.
       fatalError()
@@ -658,10 +734,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
     rhs : IRValue
   ) -> IRValue {
     guard case .func(let params, _) = type else { unreachable() }
-
-    func zext(_ value: IRValue) -> IRValue {
-      return builder.buildZExt(value, type: IntType.int64)
-    }
 
     switch kind {
     case .eq:
@@ -857,6 +929,9 @@ public struct Emitter: ExprVisitor, PathVisitor {
     builder.buildStore(
       emit(dropFuncForClosure: prefix, captures: captures, envType: envType),
       to: builder.buildStructGEP(closure, type: anyClosureType, index: 3))
+    builder.buildStore(
+      emit(equalityFuncForClosure: prefix, captures: captures, envType: envType),
+      to: builder.buildStructGEP(closure, type: anyClosureType, index: 4))
 
     // Configure the local bindings.
     builder.positionAtEnd(of: fn.appendBasicBlock(named: "entry"))
@@ -1223,6 +1298,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
   // ----------------------------------------------------------------------------------------------
   // MARK: Helpers
   // ----------------------------------------------------------------------------------------------
+
+  private func zext(_ value: IRValue) -> IRValue {
+    return builder.buildZExt(value, type: IntType.int64)
+  }
 
   /// Returns a Boolean value indicating whether the result of the given expression can be moved.
   ///
