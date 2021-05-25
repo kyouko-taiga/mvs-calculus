@@ -185,6 +185,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
   func emit(metatypeFor decl: StructDecl, irType: StructType) -> Global {
     assert(builder.insertBlock == nil)
+    defer { builder.clearInsertionPosition() }
 
     // Create a global for the type name.
     var typeName = builder.addGlobalString(name: "\(decl.name).name", value: decl.name)
