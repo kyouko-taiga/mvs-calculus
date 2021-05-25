@@ -6,9 +6,6 @@
 /// A metatype.
 typedef struct {
 
-  /// The name of the type.
-  const char* name;
-
   /// The size (a.k.a. stride) of the type.
   const int64_t size;
 

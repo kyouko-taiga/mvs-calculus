@@ -55,8 +55,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return builder.createStruct(
       name : "_Metatype",
       types: [
-        // The name of the type.
-        IntType.int8.ptr,
         // The size (a.k.a. stride) of the type.
         IntType.int64,
         // The type-erased zero-inititiazer for instances of the type.
@@ -210,7 +208,15 @@ public struct Emitter: ExprVisitor, PathVisitor {
     rhs = builder.buildLoad(rhs, type: IntType.int64)
     builder.buildRet(zext(builder.buildICmp(lhs, rhs, .equal)))
 
-    return emitPrimitiveMetatype(name: "Int", equalFn: equalFn)
+    return builder.addGlobal(
+      "_Int.Type", initializer: metatypeType.constant(
+        values: [
+          stride(of: IntType.int64),
+          anyInitFuncType.ptr.null(),
+          anyDropFuncType.ptr.null(),
+          anyCopyFuncType.ptr.null(),
+          equalFn,
+        ]))
   }
 
   /// The metatype of the built-in `Float` type.
@@ -238,7 +244,15 @@ public struct Emitter: ExprVisitor, PathVisitor {
     rhs = builder.buildLoad(rhs, type: FloatType.double)
     builder.buildRet(zext(builder.buildFCmp(lhs, rhs, .orderedEqual)))
 
-    return emitPrimitiveMetatype(name: "Float", equalFn: equalFn)
+    return builder.addGlobal(
+      "_Float.Type", initializer: metatypeType.constant(
+        values: [
+          stride(of: IntType.int64),
+          anyInitFuncType.ptr.null(),
+          anyDropFuncType.ptr.null(),
+          anyCopyFuncType.ptr.null(),
+          equalFn,
+        ]))
   }
 
   /// The metatype for all closures.
@@ -311,7 +325,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return builder.addGlobal(
       "_AnyClosure.Type", initializer: metatypeType.constant(
         values: [
-          IntType.int8.ptr.null(),
           stride(of: anyClosureType),
           initFn,
           dropFn,
@@ -320,34 +333,9 @@ public struct Emitter: ExprVisitor, PathVisitor {
         ]))
   }
 
-  /// Emits the metatype of a primitive type (i.e., `Int` or `Float`).
-  private func emitPrimitiveMetatype(name: String, equalFn: Function) -> Global {
-    // Create a global for the (mangled) type name.
-    var typeName = builder.addGlobalString(name: "_\(name).name", value: name)
-    typeName.linkage = .private
-    let typeNamePtr = builder.buildBitCast(typeName, type: IntType.int8.ptr)
-
-    // Create the metatype.
-    return builder.addGlobal(
-      "_Int.Type", initializer: metatypeType.constant(
-        values: [
-          typeNamePtr,
-          stride(of: IntType.int64),
-          anyInitFuncType.ptr.null(),
-          anyDropFuncType.ptr.null(),
-          anyCopyFuncType.ptr.null(),
-          equalFn,
-        ]))
-  }
-
   private func emit(metatypeFor decl: StructDecl, irType: StructType) -> Global {
     assert(builder.insertBlock == nil)
     defer { builder.clearInsertionPosition() }
-
-    // Create a global for the type name.
-    var typeName = builder.addGlobalString(name: "\(decl.name).name", value: decl.name)
-    typeName.linkage = .private
-    let typeNamePtr = builder.buildBitCast(typeName, type: IntType.int8.ptr)
 
     // Create the type's initializer and destructor (unless it is trivial).
     var initFn: Function?
@@ -405,7 +393,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return builder.addGlobal(
       "\(decl.name).Type", initializer: metatypeType.constant(
         values: [
-          typeNamePtr,
           stride(of: irType),
           initFn ?? anyInitFuncType.ptr.null(),
           dropFn ?? anyDropFuncType.ptr.null(),
@@ -428,11 +415,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
     defer { oldInsertBlock.map(builder.positionAtEnd(of:)) }
 
     let baseMetatype = metatype(of: elemType)
-
-    // Create a global for the (mangled) type name.
-    var typeName = builder.addGlobalString(name: "\(prefix).name", value: prefix)
-    typeName.linkage = .private
-    let typeNamePtr = builder.buildBitCast(typeName, type: IntType.int8.ptr)
 
     // Create the type's zero-initializer.
     var initFn = builder.addFunction("\(prefix).te_init", type: anyInitFuncType)
@@ -468,7 +450,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return builder.addGlobal(
       "\(prefix).Type", initializer: metatypeType.constant(
         values: [
-          typeNamePtr,
           stride(of: anyArrayType),
           initFn,
           dropFn,
