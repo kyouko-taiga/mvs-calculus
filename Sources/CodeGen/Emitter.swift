@@ -415,12 +415,12 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // Get the environment.
-    var env = builder.buildStructGEP(fn.parameters[0], type: anyClosureType, index: 1)
-    env = builder.buildLoad(env, type: PointerType.toVoid)
+    var rawEnv = builder.buildStructGEP(fn.parameters[0], type: anyClosureType, index: 1)
+    rawEnv = builder.buildLoad(rawEnv, type: voidPtr)
 
     if captures.contains(where: { (_, type) in !type.isTrivial }) {
       // If some captured symbols are not trivial, then we need to drop them individually.
-      env = builder.buildBitCast(env, type: envType)
+      let env = builder.buildBitCast(rawEnv, type: envType.ptr)
 
       for (i, capture) in captures.enumerated() {
         let loc = builder.buildStructGEP(env, type: envType, index: i)
@@ -429,7 +429,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // Free the environment's memory.
-    _ = builder.buildCall(runtime.free, args: [env])
+    _ = builder.buildCall(runtime.free, args: [rawEnv])
 
     builder.buildRetVoid()
     return fn
@@ -454,8 +454,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
     emit(dropClosure: fn.parameters[0])
 
     // Copy the source into the target.
-    let dst = builder.buildBitCast(fn.parameters[0], type: PointerType.toVoid)
-    let src = builder.buildBitCast(fn.parameters[1], type: PointerType.toVoid)
+    let dst = builder.buildBitCast(fn.parameters[0], type: voidPtr)
+    let src = builder.buildBitCast(fn.parameters[1], type: voidPtr)
     _ = builder.buildCall(
       memcpy, args: [dst, src, stride(of: anyClosureType), IntType.int1.constant(0)])
 
@@ -478,12 +478,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
       _ = builder.buildCall(memcpy, args: [dstEnv, srcEnv, size, IntType.int1.constant(0)])
     } else {
       // If some captured symbols are not trivial, then we need to copy them individually.
-      dstEnv = builder.buildBitCast(dstEnv, type: envType)
-      srcEnv = builder.buildBitCast(srcEnv, type: envType)
+      dstEnv = builder.buildBitCast(dstEnv, type: envType.ptr)
+      srcEnv = builder.buildBitCast(srcEnv, type: envType.ptr)
 
       for (i, capture) in captures.enumerated() {
         let loc = builder.buildStructGEP(dstEnv, type: envType, index: i)
-
         var val = builder.buildStructGEP(srcEnv, type: envType, index: i)
         if !capture.1.isAddressOnly {
           val = builder.buildLoad(val, type: lower(capture.1))
@@ -494,7 +493,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     // Store the new environment.
     let envLoc = builder.buildStructGEP(fn.parameters[0], type: anyClosureType, index: 1)
-    builder.buildStore(dstEnv, to: envLoc)
+    builder.buildStore(builder.buildBitCast(dstEnv, type: voidPtr), to: envLoc)
 
     builder.buildRetVoid()
     return fn
