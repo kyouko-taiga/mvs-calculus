@@ -185,6 +185,77 @@ public struct Emitter: ExprVisitor, PathVisitor {
   // MARK: Metatypes
   // ----------------------------------------------------------------------------------------------
 
+  /// The metatype of the built-in `Int` type.
+  private var intMetatype: Global {
+    // Save the builder's current insertion block to restore at the end.
+    let oldInsertBlock = builder.insertBlock
+    defer { oldInsertBlock.map(builder.positionAtEnd(of:)) }
+
+    // Create the type's equality function.
+    var equalFn = builder.addFunction("_Int.te_equal", type: anyEqualityFuncType)
+    equalFn.linkage = .private
+    equalFn.addAttribute(.alwaysinline, to: .function)
+    equalFn.addAttribute(.argmemonly  , to: .function)
+    equalFn.addAttribute(.norecurse   , to: .function)
+
+    builder.positionAtEnd(of: equalFn.appendBasicBlock(named: "entry"))
+    var lhs = builder.buildBitCast(equalFn.parameters[0], type: IntType.int64.ptr)
+    lhs = builder.buildLoad(lhs, type: IntType.int64)
+    var rhs = builder.buildBitCast(equalFn.parameters[1], type: IntType.int64.ptr)
+    rhs = builder.buildLoad(rhs, type: IntType.int64)
+    builder.buildRet(zext(builder.buildICmp(lhs, rhs, .equal)))
+
+    return emitPrimitiveMetatype(name: "Int", equalFn: equalFn)
+  }
+
+  /// The metatype of the built-in `Float` type.
+  private var floatMetatype: Global {
+    // Save the builder's current insertion block to restore at the end.
+    let oldInsertBlock = builder.insertBlock
+    defer { oldInsertBlock.map(builder.positionAtEnd(of:)) }
+
+    // Create the type's equality function.
+    var equalFn = builder.addFunction("_Float.te_equal", type: anyEqualityFuncType)
+    equalFn.linkage = .private
+    equalFn.addAttribute(.alwaysinline, to: .function)
+    equalFn.addAttribute(.argmemonly  , to: .function)
+    equalFn.addAttribute(.norecurse   , to: .function)
+
+    builder.positionAtEnd(of: equalFn.appendBasicBlock(named: "entry"))
+    var lhs = builder.buildBitCast(equalFn.parameters[0], type: IntType.int64.ptr)
+    lhs = builder.buildLoad(lhs, type: FloatType.double)
+    var rhs = builder.buildBitCast(equalFn.parameters[1], type: IntType.int64.ptr)
+    rhs = builder.buildLoad(rhs, type: FloatType.double)
+    builder.buildRet(zext(builder.buildFCmp(lhs, rhs, .orderedEqual)))
+
+    return emitPrimitiveMetatype(name: "Float", equalFn: equalFn)
+  }
+
+  /// Emits the metatype of a primitive type (i.e., `Int` or `Float`).
+  private func emitPrimitiveMetatype(name: String, equalFn: Function) -> Global {
+    // Check if we already build this metatype.
+    if let global = module.global(named: "_\(name).Type") {
+      return global
+    }
+
+    // Create a global for the (mangled) type name.
+    var typeName = builder.addGlobalString(name: "_\(name).name", value: name)
+    typeName.linkage = .private
+    let typeNamePtr = builder.buildBitCast(typeName, type: IntType.int8.ptr)
+
+    // Create the metatype.
+    return builder.addGlobal(
+      "_Int.Type", initializer: metatypeType.constant(
+        values: [
+          typeNamePtr,
+          stride(of: IntType.int64),
+          anyInitFuncType.ptr.null(),
+          anyDropFuncType.ptr.null(),
+          anyCopyFuncType.ptr.null(),
+          equalFn,
+        ]))
+  }
+
   func emit(metatypeFor decl: StructDecl, irType: StructType) -> Global {
     assert(builder.insertBlock == nil)
     defer { builder.clearInsertionPosition() }
@@ -272,9 +343,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     let oldInsertBlock = builder.insertBlock
     defer { oldInsertBlock.map(builder.positionAtEnd(of:)) }
 
-    let baseMetatype: IRValue = elemType.isTrivial
-      ? metatypeType.ptr.null()
-      : metatype(of: elemType)
+    let baseMetatype = metatype(of: elemType)
 
     // Create a global for the (mangled) type name.
     var typeName = builder.addGlobalString(name: "\(prefix).name", value: prefix)
@@ -590,10 +659,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   func emit(drop val: IRValue, type: Type) {
     switch type {
     case .array(let elemType):
-      let elemMetatype: IRValue = elemType.isTrivial
-        ? metatypeType.ptr.null()
-        : metatype(of: elemType)
-      _ = builder.buildCall(runtime.arrayDrop, args: [val, elemMetatype])
+      _ = builder.buildCall(runtime.arrayDrop, args: [val, metatype(of: elemType)])
 
     case .func:
       emit(dropClosure: val)
@@ -711,6 +777,9 @@ public struct Emitter: ExprVisitor, PathVisitor {
       let eq = builder.buildCall(fn, args: [lhs, rhs])
       return builder.buildTrunc(eq, type: IntType.int1)
 
+    case .array(let elemType):
+      return builder.buildCall(runtime.arrayEqual, args: [lhs, rhs, metatype(of: elemType)])
+
     case .func:
       let lhs = builder.buildBitCast(lhs, type: anyClosureType.ptr)
       let rhs = builder.buildBitCast(rhs, type: anyClosureType.ptr)
@@ -813,15 +882,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
     let elemIRType = lower(elemType)
     let elemIRTypePtr = elemIRType.ptr
 
-    let baseMetatype: IRValue = elemType.isTrivial
-      ? metatypeType.ptr.null()
-      : metatype(of: elemType)
-
     // Allocate the array.
     let alloca = addEntryAlloca(type: anyArrayType)
     _ = builder.buildCall(
       runtime.arrayInit,
-      args: [alloca, baseMetatype, i64(expr.elems.count), stride(of: elemIRType)])
+      args: [alloca, metatype(of: elemType), i64(expr.elems.count), stride(of: elemIRType)])
 
     // Get the base address of the array.
     var loc = builder.buildStructGEP(alloca, type: anyArrayType, index: 3)
@@ -1261,10 +1326,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     // Uniquify the base array.
     let elemType = path.type!
-    let elemMetatype: IRValue = elemType.isTrivial
-      ? metatypeType.ptr.null()
-      : metatype(of: elemType)
-    _ = builder.buildCall(runtime.arrayUniq, args: [pathBaseLoc, elemMetatype])
+    _ = builder.buildCall(runtime.arrayUniq, args: [pathBaseLoc, metatype(of: elemType)])
 
     let elemIRType = lower(elemType)
     let elemIRTypePtr = elemIRType.ptr
@@ -1340,6 +1402,12 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// - Parameter type: The MVS semantic type whose metatype should be emitted.
   private func metatype(of type: Type) -> IRValue {
     switch type {
+    case .int:
+      return intMetatype
+
+    case .float:
+      return floatMetatype
+
     case .struct(let name, _):
       return metatypes[name]!
 
