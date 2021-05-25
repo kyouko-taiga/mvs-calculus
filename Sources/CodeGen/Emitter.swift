@@ -187,6 +187,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
   /// The metatype of the built-in `Int` type.
   private var intMetatype: Global {
+    // Check if we already build this metatype.
+    if let global = module.global(named: "_Float.Type") {
+      return global
+    }
+
     // Save the builder's current insertion block to restore at the end.
     let oldInsertBlock = builder.insertBlock
     defer { oldInsertBlock.map(builder.positionAtEnd(of:)) }
@@ -210,6 +215,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
   /// The metatype of the built-in `Float` type.
   private var floatMetatype: Global {
+    // Check if we already build this metatype.
+    if let global = module.global(named: "_Float.Type") {
+      return global
+    }
+
     // Save the builder's current insertion block to restore at the end.
     let oldInsertBlock = builder.insertBlock
     defer { oldInsertBlock.map(builder.positionAtEnd(of:)) }
@@ -231,13 +241,87 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return emitPrimitiveMetatype(name: "Float", equalFn: equalFn)
   }
 
-  /// Emits the metatype of a primitive type (i.e., `Int` or `Float`).
-  private func emitPrimitiveMetatype(name: String, equalFn: Function) -> Global {
+  /// The metatype for all closures.
+  private var closureMetatype: Global {
     // Check if we already build this metatype.
-    if let global = module.global(named: "_\(name).Type") {
+    if let global = module.global(named: "_AnyClosure.Type") {
       return global
     }
 
+    // Save the builder's current insertion block to restore at the end.
+    let oldInsertBlock = builder.insertBlock
+    defer { oldInsertBlock.map(builder.positionAtEnd(of:)) }
+
+    // Create the type's zero-initializer.
+    var initFn = builder.addFunction("_AnyClosure.te_init", type: anyInitFuncType)
+    initFn.linkage = .private
+    initFn.addAttribute(.alwaysinline , to: .function)
+    do {
+      builder.positionAtEnd(of: initFn.appendBasicBlock(named: "entry"))
+      let size = stride(of: anyClosureType)
+      _ = builder.buildCall(
+        memset,
+        args: [initFn.parameters[0], IntType.int8.constant(0), size, IntType.int1.constant(0)])
+      builder.buildRetVoid()
+    }
+
+    // Create the type's destructor.
+    var dropFn = builder.addFunction("_AnyClosure.te_drop", type: anyInitFuncType)
+    dropFn.linkage = .private
+    dropFn.addAttribute(.alwaysinline , to: .function)
+    do {
+      builder.positionAtEnd(of: dropFn.appendBasicBlock(named: "entry"))
+      let receiver = builder.buildBitCast(dropFn.parameters[0], type: anyClosureType.ptr)
+      var fn = builder.buildStructGEP(receiver, type: anyClosureType, index: 3)
+      fn = builder.buildLoad(fn, type: FunctionType([anyClosureType.ptr], VoidType()).ptr)
+      _ = builder.buildCall(fn, args: [receiver])
+      builder.buildRetVoid()
+    }
+
+    // Create the type's copy function.
+    var copyFn = builder.addFunction("_AnyClosure.te_copy", type: anyCopyFuncType)
+    copyFn.linkage = .private
+    copyFn.addAttribute(.alwaysinline , to: .function)
+    do {
+      builder.positionAtEnd(of: copyFn.appendBasicBlock(named: "entry"))
+      let dst = builder.buildBitCast(copyFn.parameters[0], type: anyClosureType.ptr)
+      let src = builder.buildBitCast(copyFn.parameters[1], type: anyClosureType.ptr)
+      var fn = builder.buildStructGEP(dst, type: anyClosureType, index: 2)
+      fn = builder.buildLoad(
+        fn, type: FunctionType([anyClosureType.ptr, anyClosureType.ptr], VoidType()).ptr)
+      _ = builder.buildCall(fn, args: [dst, src])
+      builder.buildRetVoid()
+    }
+
+    // Create the type's equality function.
+    var equalFn = builder.addFunction("_AnyClosure.te_equal", type: anyEqualityFuncType)
+    equalFn.linkage = .private
+    copyFn.addAttribute(.alwaysinline , to: .function)
+    do {
+      builder.positionAtEnd(of: equalFn.appendBasicBlock(named: "entry"))
+      let lhs = builder.buildBitCast(equalFn.parameters[0], type: anyClosureType.ptr)
+      let rhs = builder.buildBitCast(equalFn.parameters[1], type: anyClosureType.ptr)
+      var fn = builder.buildStructGEP(lhs, type: anyClosureType, index: 4)
+      fn = builder.buildLoad(
+        fn, type: FunctionType([anyClosureType.ptr, anyClosureType.ptr], IntType.int64).ptr)
+      builder.buildRet(builder.buildCall(fn, args: [lhs, rhs]))
+    }
+
+    // Create the metatype.
+    return builder.addGlobal(
+      "_AnyClosure.Type", initializer: metatypeType.constant(
+        values: [
+          IntType.int8.ptr.null(),
+          stride(of: anyClosureType),
+          initFn,
+          dropFn,
+          copyFn,
+          equalFn,
+        ]))
+  }
+
+  /// Emits the metatype of a primitive type (i.e., `Int` or `Float`).
+  private func emitPrimitiveMetatype(name: String, equalFn: Function) -> Global {
     // Create a global for the (mangled) type name.
     var typeName = builder.addGlobalString(name: "_\(name).name", value: name)
     typeName.linkage = .private
@@ -256,7 +340,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
         ]))
   }
 
-  func emit(metatypeFor decl: StructDecl, irType: StructType) -> Global {
+  private func emit(metatypeFor decl: StructDecl, irType: StructType) -> Global {
     assert(builder.insertBlock == nil)
     defer { builder.clearInsertionPosition() }
 
@@ -330,7 +414,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
         ]))
   }
 
-  func emit(metatypeForArrayOf elemType: Type) -> Global {
+  private func emit(metatypeForArrayOf elemType: Type) -> Global {
     // Mangle the type of the array to create a name prefix.
     let prefix = "_" + Type.array(elem: elemType).mangled
 
@@ -393,7 +477,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
         ]))
   }
 
-  func emit(copyFuncFor decl: StructDecl, irType: StructType) -> Function {
+  private func emit(copyFuncFor decl: StructDecl, irType: StructType) -> Function {
     // Save the builder's current insertion block to restore at the end.
     let oldInsertBlock = builder.insertBlock
     defer { oldInsertBlock.map(builder.positionAtEnd(of:)) }
@@ -427,7 +511,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return fn
   }
 
-  func emit(equalityFuncFor decl: StructDecl, irType: StructType) -> Function {
+  private func emit(equalityFuncFor decl: StructDecl, irType: StructType) -> Function {
     guard case .struct(name: _, let props) = decl.type else { unreachable() }
 
     // Save the builder's current insertion block to restore at the end.
@@ -464,7 +548,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return fn
   }
 
-  func emit(
+  private func emit(
     dropFuncForClosure prefix: String,
     captures: [(String, Type)],
     envType: StructType?
@@ -506,7 +590,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return fn
   }
 
-  func emit(
+  private func emit(
     copyFuncForClosure prefix: String,
     captures: [(String, Type)],
     envType: StructType?
@@ -570,7 +654,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return fn
   }
 
-  func emit(
+  private func emit(
     equalityFuncForClosure prefix: String,
     captures: [(String, Type)],
     envType: StructType?
@@ -790,8 +874,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       return builder.buildCall(equalityFn, args: [lhs, rhs])
 
     default:
-      // FIXME: Implement equality for user-defined data types.
-      fatalError()
+      unreachable()
     }
   }
 
@@ -1404,18 +1487,16 @@ public struct Emitter: ExprVisitor, PathVisitor {
     switch type {
     case .int:
       return intMetatype
-
     case .float:
       return floatMetatype
-
     case .struct(let name, _):
       return metatypes[name]!
-
     case .array(let elemType):
       return emit(metatypeForArrayOf: elemType)
-
+    case .func:
+      return closureMetatype
     default:
-      return metatypeType.ptr.null()
+      unreachable()
     }
   }
 
