@@ -100,7 +100,7 @@ void mvs_array_drop(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
   if (*(array->refcount) > 1) {
     *(array->refcount) -= 1;
 #ifdef DEBUG
-    fprintf(stderr, "  release %p\n", array->storage);
+    fprintf(stderr, "  release %p (%lli)\n", array->storage, *array->refcount);
 #endif
     return;
   }
@@ -118,6 +118,19 @@ void mvs_array_drop(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
   free(array->refcount);
   free(array->storage);
   memset(array, 0, sizeof(mvs_AnyArray));
+}
+
+void mvs_array_copy(mvs_AnyArray* dst, mvs_AnyArray* src) {
+#ifdef DEBUG
+  fprintf(stderr, "mvs_array_copy(%p, %p)\n", dst, src);
+#endif
+
+  memcpy(dst, src, sizeof(mvs_AnyArray));
+  *(src->refcount) += 1;
+#ifdef DEBUG
+  fprintf(stderr, "mvs_array_copy(%p, %p)\n", dst, src);
+  fprintf(stderr, "  retain  %p (%lli)\n", src->storage, *src->refcount);
+#endif
 }
 
 /// Creates a unique copy of `array`'s storage.
