@@ -540,7 +540,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
       for (i, prop) in props.enumerated() {
         let dst = builder.buildStructGEP(fn.parameters[0], type: irType, index: i)
         let src = builder.buildStructGEP(fn.parameters[1], type: irType, index: i)
-        emit(copy: src, type: prop.type, to: dst)
+        let val = prop.type.isAddressOnly
+          ? src
+          : builder.buildLoad(src, type: lower(prop.type))
+
+        emit(copy: val, type: prop.type, to: dst)
       }
     } else {
       unreachable()
