@@ -901,7 +901,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
       return builder.buildTrunc(eq, type: IntType.int1)
 
     case .array(let elemType):
-      return builder.buildCall(runtime.arrayEqual, args: [lhs, rhs, metatype(of: elemType)])
+      let eq = builder.buildCall(runtime.arrayEqual, args: [lhs, rhs, metatype(of: elemType)])
+      return builder.buildTrunc(eq, type: IntType.int1)
 
     case .func:
       let lhs = builder.buildBitCast(lhs, type: anyClosureType.ptr)
