@@ -67,17 +67,13 @@ struct CaptureCollector: ExprVisitor {
 
     let names = expr.initializer.accept(&self)
     boundNames.insert(expr.decl.name)
-    return names.merging(
-      expr.body.accept(&self),
-      uniquingKeysWith: { lhs, rhs in
-        assert(lhs == rhs)
-        return lhs
-      })
+    return names.merging(expr.body.accept(&self), uniquingKeysWith: merge)
   }
 
   mutating func visit(_ expr: inout AssignExpr) -> ExprResult {
     return expr.lvalue.accept(&self)
       .merging(expr.rvalue.accept(&self), uniquingKeysWith: merge(lhs:rhs:))
+      .merging(expr.body.accept(&self), uniquingKeysWith: merge(lhs:rhs:))
   }
 
   mutating func visit(_ expr: inout ErrorExpr) -> ExprResult {
