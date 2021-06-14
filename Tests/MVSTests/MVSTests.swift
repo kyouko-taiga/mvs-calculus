@@ -46,7 +46,7 @@ final class MVSTests: XCTestCase {
           .prefix(while: { !$0.isNewline })
 
         // Emit the program's IR.
-        var emitter = try Emitter()
+        var emitter = try Emitter(shouldEmitPrint: true)
         let module = try emitter.emit(program: &program)
 
         let output = try exec(module: module, on: emitter.target) ?? ""
