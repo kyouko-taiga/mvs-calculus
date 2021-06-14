@@ -41,7 +41,7 @@ struct CaptureCollector: ExprVisitor {
   }
 
   mutating func visit(_ expr: inout CallExpr) -> ExprResult {
-    var names: ExprResult = [:]
+    var names = expr.callee.accept(&self)
     for i in 0 ..< expr.args.count {
       names.merge(expr.args[i].accept(&self), uniquingKeysWith: merge(lhs:rhs:))
     }
