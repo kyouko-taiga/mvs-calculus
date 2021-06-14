@@ -98,10 +98,10 @@ void mvs_array_drop(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
 #endif
 
   if (*(array->refcount) > 1) {
+    *(array->refcount) -= 1;
 #ifdef DEBUG
     fprintf(stderr, "  release %p\n", array->storage);
 #endif
-    *(array->refcount) = 1;
     return;
   }
 
