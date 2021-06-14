@@ -244,7 +244,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// The metatype of the built-in `Int` type.
   private var intMetatype: Global {
     // Check if we already build this metatype.
-    if let global = module.global(named: "_Float.Type") {
+    if let global = module.global(named: "_Int.Type") {
       return global
     }
 
@@ -296,9 +296,9 @@ public struct Emitter: ExprVisitor, PathVisitor {
     equalFn.addAttribute(.norecurse   , to: .function)
 
     builder.positionAtEnd(of: equalFn.appendBasicBlock(named: "entry"))
-    var lhs = builder.buildBitCast(equalFn.parameters[0], type: IntType.int64.ptr)
+    var lhs = builder.buildBitCast(equalFn.parameters[0], type: FloatType.double.ptr)
     lhs = builder.buildLoad(lhs, type: FloatType.double)
-    var rhs = builder.buildBitCast(equalFn.parameters[1], type: IntType.int64.ptr)
+    var rhs = builder.buildBitCast(equalFn.parameters[1], type: FloatType.double.ptr)
     rhs = builder.buildLoad(rhs, type: FloatType.double)
     builder.buildRet(zext(builder.buildFCmp(lhs, rhs, .orderedEqual)))
 
