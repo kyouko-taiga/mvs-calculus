@@ -173,7 +173,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     // Emit the program.
     let main  = builder.addFunction("main", type: FunctionType([], IntType.int32))
     var entry = main.appendBasicBlock(named: "entry")
-    var exit  = entry
+    let exit  = main.appendBasicBlock(named: "exit")
     builder.positionAtEnd(of: entry)
 
     var benchStart: IRInstruction?
@@ -187,7 +187,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
       // Create basic block to handle the benchmark's control flow.
       let body = main.appendBasicBlock(named: "bench_body")
       entry = main.appendBasicBlock(named: "bench_head")
-      exit  = main.appendBasicBlock(named: "bench_exit")
 
       builder.buildBr(entry)
 
@@ -219,6 +218,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       builder.buildBr(entry)
     }
 
+    builder.buildBr(exit)
     builder.positionAtEnd(of: exit)
     builder.buildRet(IntType.int32.constant(0))
 
