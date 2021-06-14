@@ -499,10 +499,13 @@ public struct Emitter: ExprVisitor, PathVisitor {
     // Create the type's copy function.
     let copyFn = builder.addFunction("\(prefix).te_copy", type: anyCopyFuncType)
     copyFn.addAttribute(.alwaysinline , to: .function)
-
-    builder.positionAtEnd(of: copyFn.appendBasicBlock(named: "entry"))
-    emit(copy: copyFn.parameters[1], type: .array(elem: elemType), to: copyFn.parameters[0])
-    builder.buildRetVoid()
+    do {
+      builder.positionAtEnd(of: copyFn.appendBasicBlock(named: "entry"))
+      let lhs = builder.buildBitCast(copyFn.parameters[0], type: anyArrayType.ptr)
+      let rhs = builder.buildBitCast(copyFn.parameters[1], type: anyArrayType.ptr)
+      emit(copy: rhs, type: .array(elem: elemType), to: lhs)
+      builder.buildRetVoid()
+    }
 
     // Create the metatype.
     return builder.addGlobal(
