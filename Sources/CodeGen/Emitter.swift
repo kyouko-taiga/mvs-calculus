@@ -911,7 +911,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
         builder.buildStructGEP(lhs, type: anyClosureType, index: 4),
         type: FunctionType([anyClosureType.ptr, anyClosureType.ptr], IntType.int64).ptr)
 
-      return builder.buildCall(equalityFn, args: [lhs, rhs])
+      let eq = builder.buildCall(equalityFn, args: [lhs, rhs])
+      return builder.buildTrunc(eq, type: IntType.int1)
 
     default:
       unreachable()
