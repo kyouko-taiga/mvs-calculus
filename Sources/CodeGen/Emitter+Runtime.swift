@@ -120,6 +120,18 @@ struct Runtime {
     return fn
   }
 
+  /// The runtime's `uptime_nanoseconds()` function.
+  var uptimeNanoseconds: Function {
+    if let fn = emitter.module.function(named: "mvs_uptime_nanoseconds") {
+      return fn
+    }
+
+    let ty = FunctionType([], FloatType.double)
+    let fn = emitter.builder.addFunction("mvs_uptime_nanoseconds", type: ty)
+    fn.addAttribute(.nounwind , to: .function)
+    return fn
+  }
+
 }
 
 extension Emitter {

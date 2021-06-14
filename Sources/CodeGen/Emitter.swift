@@ -2,6 +2,7 @@ import AST
 import Basic
 import LLVM
 
+/// An object that translates an AST into its LLVM IR.
 public struct Emitter: ExprVisitor, PathVisitor {
 
   public typealias ExprResult = IRValue
@@ -16,6 +17,12 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
   /// The machine target for the generated IR.
   public let target: TargetMachine
+
+  /// The code configuration.
+  public let mode: EmitterMode
+
+  /// Indicates whether the emitter should generate a print of the program's value.
+  public let shouldEmitPrint: Bool
 
   /// The builder that is used to generate LLVM IR instructions.
   var builder: IRBuilder!
@@ -48,6 +55,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
   var anyEqualityFuncType = FunctionType([voidPtr, voidPtr], IntType.int64)
 
   /// The (lowered) type of a metatype.
+  ///
+  /// A metatype is a data structure that contains information about the runtime representation of
+  /// of a type. In particular, it provides a type-erased interface to initialize, deallocate and
+  /// copy instances of the type.
   var metatypeType: StructType {
     if let type = module.type(named: "_Metatype") {
       return type as! StructType
@@ -125,8 +136,14 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// Creates a new emitter.
   ///
   /// - Parameter target: The machine target for the generated IR.
-  public init(target: TargetMachine? = nil) throws {
+  public init(
+    target          : TargetMachine? = nil,
+    mode            : EmitterMode = .debug,
+    shouldEmitPrint : Bool = false
+  ) throws {
     self.target = try target ?? TargetMachine()
+    self.mode = mode
+    self.shouldEmitPrint = shouldEmitPrint
   }
 
   /// Emit the LLVM IR of the given program.
@@ -153,15 +170,56 @@ public struct Emitter: ExprVisitor, PathVisitor {
       metatypes[decl.name] = emit(metatypeFor: decl, irType: irType)
     }
 
-    // Emit the program's expression.
-    let main = builder.addFunction("main", type: FunctionType([], IntType.int32))
-    let entry = main.appendBasicBlock(named: "entry")
+    // Emit the program.
+    let main  = builder.addFunction("main", type: FunctionType([], IntType.int32))
+    var entry = main.appendBasicBlock(named: "entry")
+    var exit  = entry
     builder.positionAtEnd(of: entry)
 
+    var benchStart: IRInstruction?
+    var benchCount: IRInstruction?
+    if case .benchmark(let n) = mode {
+      // Allocate and initialize benchmark variables.
+      benchStart = builder.buildAlloca(type: FloatType.double, name: "bench_start")
+      benchCount = builder.buildAlloca(type: IntType.int64, name: "bench_count")
+      builder.buildStore(i64(n), to: benchCount!)
+
+      // Create basic block to handle the benchmark's control flow.
+      let body = main.appendBasicBlock(named: "bench_body")
+      entry = main.appendBasicBlock(named: "bench_head")
+      exit  = main.appendBasicBlock(named: "bench_exit")
+
+      builder.buildBr(entry)
+
+      // Emit the start of the benchmark.
+      builder.positionAtEnd(of: entry)
+      let condition = builder.buildICmp(
+        builder.buildLoad(benchCount!, type: IntType.int64), i64(0), .signedGreaterThan)
+      builder.buildCondBr(condition: condition, then: body, else: exit)
+
+      builder.positionAtEnd(of: body)
+      builder.buildStore(builder.buildCall(runtime.uptimeNanoseconds, args: []), to: benchStart!)
+      builder.buildStore(
+        builder.buildSub(builder.buildLoad(benchCount!, type: IntType.int64), i64(1)),
+        to: benchCount!)
+    }
+
+    // Emit the program's expression.
     let value = program.entry.accept(&self)
-    emitPrint(value: value, type: program.entry.type!)
+    if shouldEmitPrint {
+      emitPrint(value: value, type: program.entry.type!)
+    }
     emit(drop: value, type: program.entry.type!)
 
+    if case .benchmark = mode {
+      let delta = builder.buildSub(
+        builder.buildCall(runtime.uptimeNanoseconds, args: []),
+        builder.buildLoad(benchStart!, type: FloatType.double))
+      _ = builder.buildCall(runtime.printF64, args: [delta])
+      builder.buildBr(entry)
+    }
+
+    builder.positionAtEnd(of: exit)
     builder.buildRet(IntType.int32.constant(0))
 
     do {
