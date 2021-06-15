@@ -1,0 +1,37 @@
+struct Unit {} in
+
+struct S0 {
+  var p0: [[Float]]
+} in
+
+struct S1 {
+  var p0: S0
+  var p1: Int
+} in
+
+struct S2 {
+  var p0: [S1]
+} in
+
+let f: (inout Float) -> Unit = (x: inout Float) -> Unit {
+  x = x * 2.0 in
+  Unit()
+} in
+
+let g: (inout S1) -> Unit = (x: inout S1) -> Unit {
+  x.p0.p0[x.p1][1] = x.p0.p0[x.p1][1] * 2.0 in
+  Unit()
+} in
+
+let h: (inout [Float]) -> Unit = (x: inout [Float]) -> Unit {
+  x[1] = x[1] * 2.0 in
+  Unit()
+} in
+
+var a: [Float] = [1.0, 2.0, 3.0] in
+var b: S1 = S1(S0([a, a, a]), 0) in
+var c: S2 = S2([b, b]) in
+var u: Unit = f(&c.p0[0].p0.p0[0][1]) in
+u = g(&c.p0[0]) in
+u = h(&c.p0[0].p0.p0[0]) in
+c.p0[0].p0.p0[0][1] // #!output 16.000000
