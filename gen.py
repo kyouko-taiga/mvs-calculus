@@ -39,9 +39,9 @@ inst_weights = {
     VarInst: 20,
     AssignInst: 15,
     NewArrayInst: 10,
-    ArrayGetInst: 10,
+    ArrayGetInst: 100,
     NewStructInst: 20,
-    StructGetInst: 20,
+    StructGetInst: 200,
 }
 floating_type_weights = {
     FloatType: 1,
@@ -76,10 +76,15 @@ return_offset_weights = {
     -2: 50,
     -3: 25,
     -4: 10,
+    -5: 5,
+    -6: 3,
+    -7: 2,
+    -8: 1,
 }
 
 
-op_limit = 1000
+op_limit = 5000
+inst_min = 8
 inst_limit = 256
 func_limit = 128
 struct_limit = 16
@@ -111,7 +116,7 @@ def print_inst(f, inst, dialect):
       args = ", ".join("p{}: {}".format(n, v.str) 
                        for (n, v) in enumerate(inst.values))
     elif dialect == 'mvs':
-      args = ", ".join("{}".format(n, v.str) 
+      args = ", ".join("{}".format(v.str) 
                        for v in inst.values)
     f.write("    let {}: {} = {}({})".format(inst.name.str, inst.name.ty, inst.name.ty, args))
   elif isinstance(inst, StructGetInst):
@@ -460,7 +465,7 @@ def gen_func(func_name, func_env, struct_env):
     name_env[name.ty].append(name)
   assert(is_inhabited(name_env, func_name.ty))
   var_names = set()
-  for _ in range(rand.randrange(1, inst_limit)):
+  for _ in range(rand.randrange(inst_min, inst_limit)):
     inst = gen_inst(name_env, var_names, func_name, func_env, struct_env)
     assert not isinstance(inst, ReturnInst)
     func_insts.append(inst)
@@ -647,15 +652,15 @@ def initial_values(params):
   return [loop(p.ty) for p in params]
 
 
-def main():
+def main(prefix):
   program = None 
   while program is None:
     program = validate_program(gen_program())
-  with open("gen.swift", "w") as f:
+  with open(f"{prefix}.swift", "w") as f:
     print_program(f, "Gen", program, "swift")
-  with open("gen.mvs", "w") as f:
+  with open(f"{prefix}.mvs", "w") as f:
     print_program(f, "Gen", program, "mvs")
 
 
 if __name__ == "__main__":
-  main()
+  main('gen')
