@@ -1,5 +1,3 @@
-import AST
-
 /// An AST visitor that gathers the variables that occur free in an expression.
 struct CaptureCollector: ExprVisitor {
 

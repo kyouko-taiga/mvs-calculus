@@ -120,11 +120,33 @@ public struct FuncExpr: Expr {
 
   public var type: Type?
 
+  /// The free variables captured by the function.
+  private var captures: [String: Type]?
+
   public init(params: [ParamDecl], output: Sign, body: Expr, range: SourceRange) {
     self.params = params
     self.output = output
     self.body = body
     self.range = range
+  }
+
+  /// Returns the variables captured by the function.
+  public mutating func collectCaptures() -> [String: Type] {
+    if let captures = self.captures {
+      return captures
+    }
+
+    var collector = CaptureCollector()
+    captures = collector.visit(&self)
+    return captures!
+  }
+
+  /// Returns the variables captured by the function.
+  ///
+  /// - Parameter predicate: A closure that accept the name of the capture and returns whether it
+  ///   should be excluded from the result.
+  public mutating func collectCaptures(excluding predicate: (String) -> Bool) -> [String: Type] {
+    return collectCaptures().filter({ !predicate($0.key) })
   }
 
   public mutating func accept<V>(_ visitor: inout V) -> V.ExprResult where V: ExprVisitor {

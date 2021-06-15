@@ -611,13 +611,17 @@ public struct Emitter: ExprVisitor, PathVisitor {
     captures: [(String, Type)],
     envType: StructType?
   ) -> Function {
-    // Save the builder's current insertion block to restore them at the end.
+    let name = "\(prefix).drop"
+    if let fn = module.function(named: name) {
+      return fn
+    }
+
+    // Save the builder's current insertion block to restore them later.
     let oldInsertBlock = builder.insertBlock!
     defer { builder.positionAtEnd(of: oldInsertBlock) }
 
     // Create the copy function.
-    var fn = builder.addFunction(
-      "\(prefix).drop", type: FunctionType([anyClosureType.ptr], VoidType()))
+    var fn = builder.addFunction(name, type: FunctionType([anyClosureType.ptr], VoidType()))
     fn.linkage = .private
     builder.positionAtEnd(of: fn.appendBasicBlock(named: "entry"))
 
@@ -653,13 +657,18 @@ public struct Emitter: ExprVisitor, PathVisitor {
     captures: [(String, Type)],
     envType: StructType?
   ) -> Function {
-    // Save the builder's current insertion block to restore them at the end.
+    let name = "\(prefix).copy"
+    if let fn = module.function(named: name) {
+      return fn
+    }
+
+    // Save the builder's current insertion block to restore them later.
     let oldInsertBlock = builder.insertBlock!
     defer { builder.positionAtEnd(of: oldInsertBlock) }
 
     // Create the copy function.
     var fn = builder.addFunction(
-      "\(prefix).copy", type: FunctionType([anyClosureType.ptr, anyClosureType.ptr], VoidType()))
+      name, type: FunctionType([anyClosureType.ptr, anyClosureType.ptr], VoidType()))
     fn.linkage = .private
     builder.positionAtEnd(of: fn.appendBasicBlock(named: "entry"))
 
@@ -717,14 +726,18 @@ public struct Emitter: ExprVisitor, PathVisitor {
     captures: [(String, Type)],
     envType: StructType?
   ) -> Function {
+    let name = "\(prefix).equal"
+    if let fn = module.function(named: name) {
+      return fn
+    }
+
     // Save the builder's current insertion block to restore them at the end.
     let oldInsertBlock = builder.insertBlock!
     defer { builder.positionAtEnd(of: oldInsertBlock) }
 
     // Create the equality function.
     var fn = builder.addFunction(
-      "\(prefix).equal",
-      type: FunctionType([anyClosureType.ptr, anyClosureType.ptr], IntType.int64))
+      name, type: FunctionType([anyClosureType.ptr, anyClosureType.ptr], IntType.int64))
     fn.linkage = .private
     builder.positionAtEnd(of: fn.appendBasicBlock(named: "entry"))
 
@@ -774,6 +787,55 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     builder.positionAtEnd(of: neBlock)
     builder.buildRet(i64(0))
+    return fn
+  }
+
+
+  private mutating func emitGlobalFunction(
+    decl: inout FuncExpr,
+    name: String,
+    inlinable: Bool = true
+  ) -> Function {
+    guard case .func(let params, let output) = decl.type else { unreachable() }
+
+    // Create the function.
+    let type = buildFunctionType(from: params, to: output, withEnvironment: false)
+    var fn = builder.addFunction(name, type: type)
+    fn.linkage = .private
+    if !inlinable {
+      fn.addAttribute(.noinline, to: .function)
+    }
+
+    // Save the builder's current insertion block and bindings to restore them later.
+    let oldInsertBlock = builder.insertBlock!
+    let oldBindings = bindings
+    defer {
+      builder.positionAtEnd(of: oldInsertBlock)
+      bindings = oldBindings
+    }
+
+    // Configure the local bindings.
+    builder.positionAtEnd(of: fn.appendBasicBlock(named: "entry"))
+    bindings = bindings.filter({ $0.value is Function })
+    let offset = output.isAddressOnly ? 1 : 0
+    for (i, param) in decl.params.enumerated() {
+      if param.type!.isAddressOnly {
+        bindings[param.name] = fn.parameters[i + offset]
+      } else {
+        let alloca = addEntryAlloca(type: lower(param.type!))
+        builder.buildStore(fn.parameters[i + offset], to: alloca)
+        bindings[param.name] = alloca
+      }
+    }
+
+    // Emit the function.
+    if output.isAddressOnly {
+      emit(move: &decl.body, to: fn.parameters[0])
+      builder.buildRetVoid()
+    } else {
+      builder.buildRet(decl.body.accept(&self))
+    }
+
     return fn
   }
 
@@ -1075,21 +1137,13 @@ public struct Emitter: ExprVisitor, PathVisitor {
   public mutating func visit(_ expr: inout FuncExpr) -> IRValue {
     guard case .func(let params, let output) = expr.type else { unreachable() }
 
-    // Save the builder's current insertion block and bindings to restore them at the end.
-    let oldInsertBlock = builder.insertBlock!
-    let oldBindings = bindings
-    defer {
-      builder.positionAtEnd(of: oldInsertBlock)
-      bindings = oldBindings
-    }
-
     // Generate a prefix for the name of the functions we're about to emit.
     let prefix = "_closure\(nextClosureID)"
     nextClosureID += 1
 
     // Gathers the free variables of the function.
-    var collector = CaptureCollector()
-    let captures = expr.accept(&collector).sorted(by: { a, b in a.key < b.key })
+    let captures = expr.collectCaptures(excluding: { bindings[$0] is Function })
+      .sorted(by: { a, b in a.key < b.key })
 
     // Create the function's environment.
     let envType: StructType?
@@ -1123,27 +1177,21 @@ public struct Emitter: ExprVisitor, PathVisitor {
     var fn = builder.addFunction("\(prefix)", type: buildFunctionType(from: params, to: output))
     fn.linkage = .private
 
-    // Create the closure.
-    let closure = addEntryAlloca(type: anyClosureType)
-    builder.buildStore(
-      builder.buildBitCast(fn, type: PointerType.toVoid),
-      to: builder.buildStructGEP(closure, type: anyClosureType, index: 0))
-    builder.buildStore(
-      env,
-      to: builder.buildStructGEP(closure, type: anyClosureType, index: 1))
-    builder.buildStore(
-      emit(copyFuncForClosure: prefix, captures: captures, envType: envType),
-      to: builder.buildStructGEP(closure, type: anyClosureType, index: 2))
-    builder.buildStore(
-      emit(dropFuncForClosure: prefix, captures: captures, envType: envType),
-      to: builder.buildStructGEP(closure, type: anyClosureType, index: 3))
-    builder.buildStore(
-      emit(equalityFuncForClosure: prefix, captures: captures, envType: envType),
-      to: builder.buildStructGEP(closure, type: anyClosureType, index: 4))
+    // Build the closure.
+    let closure = buildClosure(
+      fn: fn, prefix: prefix, captures: captures, env: env, envType: envType)
+
+    // Save the builder's current insertion block and bindings to restore them at the end.
+    let oldInsertBlock = builder.insertBlock!
+    let oldBindings = bindings
+    defer {
+      builder.positionAtEnd(of: oldInsertBlock)
+      bindings = oldBindings
+    }
 
     // Configure the local bindings.
     builder.positionAtEnd(of: fn.appendBasicBlock(named: "entry"))
-    bindings = [:]
+    bindings = bindings.filter({ $0.value is Function })
     let offset = output.isAddressOnly ? 1 : 0
     for (i, param) in expr.params.enumerated() {
       if param.type!.isAddressOnly {
@@ -1176,8 +1224,29 @@ public struct Emitter: ExprVisitor, PathVisitor {
   public mutating func visit(_ expr: inout CallExpr) -> IRValue {
     guard case .func(let params, let output) = expr.callee.type else { unreachable() }
 
-    // Emit the callee.
-    let callee = builder.buildBitCast(expr.callee.accept(&self), type: anyClosureType.ptr)
+    var fun: IRValue
+    var env: IRValue?
+
+    // Extract the function.
+    if let path = expr.callee as? NamePath,
+       let f = bindings[path.name] as? Function
+    {
+      // The function can be dispatched statically.
+      fun = f
+    } else {
+      // Emit the callee.
+      let callee = builder.buildBitCast(expr.callee.accept(&self), type: anyClosureType.ptr)
+
+      // Extract the function.
+      let fnType = buildFunctionType(from: params, to: output)
+      fun = builder.buildStructGEP(callee, type: anyClosureType, index: 0)
+      fun = builder.buildLoad(fun, type: PointerType.toVoid)
+      fun = builder.buildBitCast(fun, type: fnType.ptr)
+
+      // Extract the environment.
+      env = builder.buildStructGEP(callee, type: anyClosureType, index: 1)
+      env = builder.buildLoad(env!, type: PointerType.toVoid)
+    }
 
     // Emit the arguments.
     var args: [IRValue] = []
@@ -1185,23 +1254,17 @@ public struct Emitter: ExprVisitor, PathVisitor {
       args.append(expr.args[i].accept(&self))
     }
 
-    // Extract the function.
-    let fnType = buildFunctionType(from: params, to: output)
-    var fn = builder.buildStructGEP(callee, type: anyClosureType, index: 0)
-    fn = builder.buildLoad(fn, type: PointerType.toVoid)
-    fn = builder.buildBitCast(fn, type: fnType.ptr)
-
-    // Extract the environment.
-    var env = builder.buildStructGEP(callee, type: anyClosureType, index: 1)
-    env = builder.buildLoad(env, type: PointerType.toVoid)
+    if let e = env {
+      args.append(e)
+    }
 
     // Emit the call.
     let result: IRValue
     if output.isAddressOnly {
       result = addEntryAlloca(type: lower(output))
-      _ = builder.buildCall(fn, args: [result] + args + [env])
+      _ = builder.buildCall(fun, args: [result] + args)
     } else {
-      result = builder.buildCall(fn, args: args + [env])
+      result = builder.buildCall(fun, args: args)
     }
 
     return result
@@ -1276,6 +1339,31 @@ public struct Emitter: ExprVisitor, PathVisitor {
   }
 
   public mutating func visit(_ expr: inout BindingExpr) -> IRValue {
+    // If the binding declares a function, attempts to define it globally.
+    if bindings[expr.decl.name] == nil,
+       var decl = expr.initializer as? FuncExpr
+    {
+      defer { expr.initializer = decl }
+
+      // If the function has no captures, then it can be emitted as a global symbol.
+      let captures = decl.collectCaptures(excluding: { bindings[$0] is Function })
+      if captures.isEmpty {
+        // Update the bindings.
+        let oldBindings = bindings
+        bindings[expr.decl.name] = emitGlobalFunction(
+          decl      : &decl,
+          name      : "_g" + expr.decl.name,
+          inlinable : !expr.decl.name.hasPrefix("noinline_"))
+
+        // Emit the body of the expression.
+        let body = expr.body.accept(&self)
+
+        // Restore the bindings.
+        bindings = oldBindings
+        return body
+      }
+    }
+
     // If the body of the expression is the binding itself, return its value directly.
     if let path = expr.body as? NamePath, path.name == expr.decl.name {
       return expr.initializer.accept(&self)
@@ -1336,6 +1424,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
   public mutating func visit(_ expr: inout NamePath) -> IRValue {
     let loc = bindings[expr.name]!
+
+    if let fn = loc as? Function {
+      return buildClosure(
+        fn: fn, prefix: "_g", captures: [], env: voidPtr.null(), envType: nil)
+    }
 
     if expr.type!.isAddressOnly {
       let alloca = addEntryAlloca(type: lower(expr.type!))
@@ -1565,9 +1658,15 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// - Parameters:
   ///   - params: An array with the MVS semantic type of each formal parameter.
   ///   - output: The MVS semantic type of the return value.
-  private func buildFunctionType(from params: [Type], to output: Type) -> FunctionType {
+  ///   - withEnvironment: A flag indicating whether the list of formal parameters must include a
+  ///     pointer to a function's environment.
+  private func buildFunctionType(
+    from params: [Type],
+    to output: Type,
+    withEnvironment: Bool = true
+  ) -> FunctionType {
     var irParamTypes: [IRType] = []
-    irParamTypes.reserveCapacity(params.count)
+    irParamTypes.reserveCapacity(params.count + 1)
 
     // Lower the function's formal parameters.
     for type in params {
@@ -1584,7 +1683,9 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // The environment is passed as an arbitrary pointer, at the end of the parameter list.
-    irParamTypes.append(PointerType.toVoid)
+    if withEnvironment {
+      irParamTypes.append(PointerType.toVoid)
+    }
 
     // If the output has an address-only type, we pass it as first parameter.
     if output.isAddressOnly {
@@ -1593,6 +1694,45 @@ public struct Emitter: ExprVisitor, PathVisitor {
     } else {
       return FunctionType(irParamTypes, lower(output))
     }
+  }
+
+  /// Builds a closure.
+  ///
+  /// - Parameters:
+  ///   - fn: The lifted function representing the closure.
+  ///   - prefix: The string prefix for the meta functions.
+  ///   - captures: The list of symbols being captured by the closure.
+  ///   - env: The closure's environment.
+  ///   - envType: The type of the closure's environment.
+  private func buildClosure(
+    fn      : Function,
+    prefix  : String,
+    captures: [(String, Type)],
+    env     : IRValue,
+    envType : StructType?
+  ) -> IRInstruction {
+    let closure = addEntryAlloca(type: anyClosureType)
+    func gep(index: Int) -> IRValue {
+      builder.buildStructGEP(closure, type: anyClosureType, index: index)
+    }
+
+    builder.buildStore(
+      builder.buildBitCast(fn, type: PointerType.toVoid),
+      to: gep(index: 0))
+    builder.buildStore(
+      env,
+      to: gep(index: 1))
+    builder.buildStore(
+      emit(copyFuncForClosure: prefix, captures: captures, envType: envType),
+      to: gep(index: 2))
+    builder.buildStore(
+      emit(dropFuncForClosure: prefix, captures: captures, envType: envType),
+      to: gep(index: 3))
+    builder.buildStore(
+      emit(equalityFuncForClosure: prefix, captures: captures, envType: envType),
+      to: gep(index: 4))
+
+    return closure
   }
 
   /// Returns the offset in bytes between successive objects of the specified type, including
