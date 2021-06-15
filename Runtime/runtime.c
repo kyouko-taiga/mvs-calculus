@@ -37,7 +37,7 @@ typedef struct {
   ///
   /// The storage has the following layout:
   ///
-  ///     { refcount: i64; count: i64; capacity: i64; elements: T[capacity] }
+  ///     { refcount: i64; count: i64; capacity: i64; elements: T[count] }
   ///
   /// If the pointer is null, then it is assumed that the array has a 0 capacity.
   void* storage;
