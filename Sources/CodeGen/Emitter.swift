@@ -172,55 +172,64 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     // Emit the program.
     let main  = builder.addFunction("main", type: FunctionType([], IntType.int32))
-    var entry = main.appendBasicBlock(named: "entry")
-    let exit  = main.appendBasicBlock(named: "exit")
+    let entry = main.appendBasicBlock(named: "entry")
     builder.positionAtEnd(of: entry)
 
-    var benchStart: IRInstruction?
-    var benchCount: IRInstruction?
+    let programType = program.entry.type!
+    let programIRType = lower(programType)
+
     if case .benchmark(let n) = mode {
       // Allocate and initialize benchmark variables.
-      benchStart = builder.buildAlloca(type: FloatType.double, name: "bench_start")
-      benchCount = builder.buildAlloca(type: IntType.int64, name: "bench_count")
-      builder.buildStore(i64(n), to: benchCount!)
+      let benchStart = builder.buildAlloca(type: FloatType.double, name: "bench_start")
+      let benchCount = builder.buildAlloca(type: IntType.int64, name: "bench_count")
+      let benchValue = builder.buildAlloca(type: programIRType)
+      builder.buildStore(i64(n), to: benchCount)
 
       // Create basic block to handle the benchmark's control flow.
       let body = main.appendBasicBlock(named: "bench_body")
-      entry = main.appendBasicBlock(named: "bench_head")
-
-      builder.buildBr(entry)
+      let head = main.appendBasicBlock(named: "bench_head")
+      let exit = main.appendBasicBlock(named: "bench_exit")
+      builder.buildBr(head)
 
       // Emit the start of the benchmark.
-      builder.positionAtEnd(of: entry)
+      builder.positionAtEnd(of: head)
       let condition = builder.buildICmp(
-        builder.buildLoad(benchCount!, type: IntType.int64), i64(0), .signedGreaterThan)
+        builder.buildLoad(benchCount, type: IntType.int64), i64(0), .signedGreaterThan)
       builder.buildCondBr(condition: condition, then: body, else: exit)
 
       builder.positionAtEnd(of: body)
-      builder.buildStore(builder.buildCall(runtime.uptimeNanoseconds, args: []), to: benchStart!)
+      builder.buildStore(builder.buildCall(runtime.uptimeNanoseconds, args: []), to: benchStart)
       builder.buildStore(
-        builder.buildSub(builder.buildLoad(benchCount!, type: IntType.int64), i64(1)),
-        to: benchCount!)
-    }
+        builder.buildSub(builder.buildLoad(benchCount, type: IntType.int64), i64(1)),
+        to: benchCount)
 
-    // Emit the program's expression.
-    let value = program.entry.accept(&self)
-    if shouldEmitPrint {
-      emitPrint(value: value, type: program.entry.type!)
-    }
-    emit(drop: value, type: program.entry.type!)
+      // Emit the program's expression.
+      if isMovable(program.entry) {
+        emit(move: &program.entry, to: benchValue)
+      } else {
+        emit(copy: &program.entry, to: benchValue)
+      }
 
-    if case .benchmark = mode {
+      // Emit the end of the benchmark.
       let delta = builder.buildSub(
         builder.buildCall(runtime.uptimeNanoseconds, args: []),
-        builder.buildLoad(benchStart!, type: FloatType.double))
+        builder.buildLoad(benchStart, type: FloatType.double))
       _ = builder.buildCall(runtime.printF64, args: [delta])
-      builder.buildBr(entry)
+      builder.buildBr(head)
+
+      // Use the computed value.
+      builder.positionAtEnd(of: exit)
+      let value = builder.buildBitCast(benchValue, type: voidPtr)
+      _ = builder.buildCall(runtime.sink, args: [value])
     } else {
-      builder.buildBr(exit)
+      // Emit the program's expression.
+      let value = program.entry.accept(&self)
+      if shouldEmitPrint {
+        emitPrint(value: value, type: program.entry.type!)
+      }
+      emit(drop: value, type: program.entry.type!)
     }
 
-    builder.positionAtEnd(of: exit)
     builder.buildRet(IntType.int32.constant(0))
 
     do {

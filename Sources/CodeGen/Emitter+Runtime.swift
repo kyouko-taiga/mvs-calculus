@@ -55,6 +55,15 @@ struct Runtime {
     return emitter.builder.addFunction("mvs_print_f64", type: ty)
   }
 
+  /// The runtime's `sink` function.
+  var sink: Function {
+    if let fn = emitter.module.function(named: "mvs_sink") {
+      return fn
+    } else {
+      return emitter.builder.addFunction("mvs_sink", type: FunctionType([voidPtr], VoidType()))
+    }
+  }
+
   /// The runtime's `array_init(array, elem_type, count, size)` function.
   var arrayInit: Function {
     if let fn = emitter.module.function(named: "mvs_array_init") {
