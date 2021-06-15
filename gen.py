@@ -162,6 +162,9 @@ def print_struct(f, struct, dialect):
 
 
 def print_program(f, name, program, dialect):
+  if dialect == 'swift':
+    f.write('  import Dispatch\n')
+
   for struct in program.structs:
     print_struct(f, struct, dialect)
   for func in reversed(program.funcs):
@@ -175,7 +178,7 @@ def print_program(f, name, program, dialect):
   grad_args = ("input.{}".format(p.str) for p in params) 
 
   if dialect == 'swift':
-    f.write('  func main() {\n')
+    f.write('  func main() -> {} {{\n'.format(entry.name.ty))
   elif dialect == 'mvs':
     f.write('  let main: () -> {} = () -> {} {{\n'.format(
       entry.name.ty, entry.name.ty))
@@ -183,11 +186,29 @@ def print_program(f, name, program, dialect):
     f.write('    let v{}: {} = {}'.format(n, p.ty, print_value(v, dialect)))
     f.write('\n' if dialect == 'swift' else ' in\n')
   if dialect == 'swift':
-    f.write('    print(f0({}))\n'.format(', '.join(invoke_args)))
+    f.write('    return f0({})\n'.format(', '.join(invoke_args)))
   elif dialect == 'mvs':
     f.write('    noinline_f0({})\n'.format(', '.join(invoke_args)))
   f.write('  }\n' if dialect == 'swift' else '  } in\n')
-  f.write('  main()\n')
+
+  if dialect == 'swift':
+    v = initial_values([entry.name])[0]
+
+    f.write('  func benchmark() {\n')
+    f.write('    let start = DispatchTime.now().uptimeNanoseconds\n')
+    f.write('    var result: {} = {}\n'.format(entry.name.ty, v))
+    f.write('    for _ in 1...1000 {\n')
+    f.write('      result = main()\n')
+    f.write('    }\n')
+    f.write('    let end = DispatchTime.now().uptimeNanoseconds\n')
+    f.write('    print(result)\n')
+    f.write('    print(end - start)\n')
+    f.write('  }\n')
+    f.write('  benchmark()\n')
+  elif dialect == 'mvs':
+    # In MVS function loop is generated with `--benchmark`
+    # compiler flag.
+    f.write('main()')
 
 def print_value(value, dialect):
   if isinstance(value, StructValue):
