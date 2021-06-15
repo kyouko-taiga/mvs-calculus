@@ -107,9 +107,12 @@ public struct Emitter: ExprVisitor, PathVisitor {
     if let type = module.type(named: "_AnyArray") {
       return type as! StructType
     }
-    return builder.createStruct(
-      name : "_AnyArray",
-      types: [IntType.int64, IntType.int64, PointerType(pointee: IntType.int64), voidPtr])
+    return builder.createStruct(name : "_AnyArray", types: [voidPtr])
+  }
+
+  /// Returns the stride of a type-erased array header.
+  var anyArrayHeaderSize: IRValue {
+    return builder.buildMul(stride(of: IntType.int64), i64(3))
   }
 
   /// LLVM's `memset` intrinsic (i.e., `llvm.memset.p0i8.i64`).
@@ -693,7 +696,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     // Get the source's environment.
     var srcEnv = builder.buildStructGEP(fn.parameters[0], type: anyClosureType, index: 1)
-    srcEnv = builder.buildLoad(srcEnv, type: PointerType.toVoid)
+    srcEnv = builder.buildLoad(srcEnv, type: voidPtr)
 
     if captures.allSatisfy({ (_, type) in type.isTrivial }) {
       // If all captured symbols are trivial, then memcpy is enough.
@@ -854,7 +857,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     let size = stride(of: irType)
-    let buf = builder.buildBitCast(val, type: PointerType.toVoid)
+    let buf = builder.buildBitCast(val, type: voidPtr)
     _ = builder.buildCall(
       memset, args: [buf, IntType.int8.constant(0), size, IntType.int1.constant(0)])
   }
@@ -904,15 +907,21 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     case .array:
       // _ = builder.buildCall(runtime.arrayCopy, args: [loc, val])
-      let dst = builder.buildBitCast(loc, type: voidPtr)
-      let src = builder.buildBitCast(val, type: voidPtr)
-      _ = builder.buildCall(
-        memcpy, args: [dst, src, stride(of: anyArrayType), IntType.int1.constant(0)])
+      let dst = builder.buildStructGEP(loc, type: anyArrayType, index: 0)
+      let src = builder.buildStructGEP(val, type: anyArrayType, index: 0)
+      let val = builder.buildLoad(src, type: voidPtr)
+      builder.buildStore(val, to: dst)
 
-      var counterLoc = builder.buildStructGEP(loc, type: anyArrayType, index: 2)
-      counterLoc = builder.buildLoad(counterLoc, type: PointerType(pointee: IntType.int64))
-      let counter = builder.buildLoad(counterLoc, type: IntType.int64)
-      builder.buildStore(builder.buildAdd(counter, i64(1)), to: counterLoc)
+      let elseIB = builder.currentFunction!.appendBasicBlock(named: "else")
+      let thenIB = builder.currentFunction!.appendBasicBlock(named: "then")
+      builder.buildCondBr(condition: builder.buildIsNull(val), then: elseIB, else: thenIB)
+      builder.positionAtEnd(of: thenIB)
+
+      let counterLoc = builder.buildBitCast(val, type: IntType.int64.ptr)
+      let counterVal = builder.buildLoad(counterLoc, type: IntType.int64)
+      builder.buildStore(builder.buildAdd(counterVal, i64(1)), to: counterLoc)
+      builder.buildBr(elseIB)
+      builder.positionAtEnd(of: elseIB)
 
     case .func:
       let closure = builder.buildBitCast(val, type: anyClosureType.ptr)
@@ -1085,7 +1094,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
   public mutating func visit(_ expr: inout ArrayExpr) -> IRValue {
     guard case .array(let elemType) = expr.type else { unreachable() }
     let elemIRType = lower(elemType)
-    let elemIRTypePtr = elemIRType.ptr
 
     // Allocate the array.
     let alloca = addEntryAlloca(type: anyArrayType)
@@ -1093,14 +1101,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
       runtime.arrayInit,
       args: [alloca, metatype(of: elemType), i64(expr.elems.count), stride(of: elemIRType)])
 
-    // Get the base address of the array.
-    var loc = builder.buildStructGEP(alloca, type: anyArrayType, index: 3)
-    loc = builder.buildLoad(loc, type: voidPtr)
-    loc = builder.buildBitCast(loc, type: elemIRTypePtr)
-
     // Initialize each element.
+    let payload = buildPayload(of: alloca, elemType: elemIRType)
     for i in 0 ..< expr.elems.count {
-      let gep = builder.buildInBoundsGEP(loc, type: elemIRType, indices: [i64(i)])
+      let gep = builder.buildInBoundsGEP(payload, type: elemIRType, indices: [i64(i)])
       if isMovable(expr.elems[i]) {
         emit(move: &expr.elems[i], to: gep)
       } else {
@@ -1152,7 +1156,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     if captures.isEmpty {
       // No environment.
       envType = nil
-      env = PointerType.toVoid.null()
+      env = voidPtr.null()
     } else {
       // Create the environment type.
       envType = builder.createStruct(
@@ -1240,12 +1244,12 @@ public struct Emitter: ExprVisitor, PathVisitor {
       // Extract the function.
       let fnType = buildFunctionType(from: params, to: output)
       fun = builder.buildStructGEP(callee, type: anyClosureType, index: 0)
-      fun = builder.buildLoad(fun, type: PointerType.toVoid)
+      fun = builder.buildLoad(fun, type: voidPtr)
       fun = builder.buildBitCast(fun, type: fnType.ptr)
 
       // Extract the environment.
       env = builder.buildStructGEP(callee, type: anyClosureType, index: 1)
-      env = builder.buildLoad(env!, type: PointerType.toVoid)
+      env = builder.buildLoad(env!, type: voidPtr)
     }
 
     // Emit the arguments.
@@ -1285,10 +1289,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
     let prefix = "_\(expr.kind.rawValue)\(expr.type!.mangled)"
     if let fn = module.function(named: prefix) {
       builder.buildStore(
-        builder.buildBitCast(fn, type: PointerType.toVoid),
+        builder.buildBitCast(fn, type: voidPtr),
         to: builder.buildStructGEP(closure, type: anyClosureType, index: 0))
       builder.buildStore(
-        PointerType.toVoid.null(),
+        voidPtr.null(),
         to: builder.buildStructGEP(closure, type: anyClosureType, index: 1))
       builder.buildStore(
         module.function(named: "\(prefix).copy")!,
@@ -1305,10 +1309,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
     fn.linkage = .private
 
     builder.buildStore(
-      builder.buildBitCast(fn, type: PointerType.toVoid),
+      builder.buildBitCast(fn, type: voidPtr),
       to: builder.buildStructGEP(closure, type: anyClosureType, index: 0))
     builder.buildStore(
-      PointerType.toVoid.null(),
+      voidPtr.null(),
       to: builder.buildStructGEP(closure, type: anyClosureType, index: 1))
     builder.buildStore(
       emit(copyFuncForClosure: prefix, captures: [], envType: nil),
@@ -1469,8 +1473,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
   public mutating func visit(path: inout ElemPath) -> PathResult {
     guard case .array(let elemType) = path.base.type else { unreachable() }
-    let elemIRType = lower(elemType)
-    let elemIRTypePtr = elemIRType.ptr
 
     // Emit the base expression.
     let pathBase: IRValue
@@ -1482,15 +1484,14 @@ public struct Emitter: ExprVisitor, PathVisitor {
       origin = (value: pathBase, type: path.base.type!)
     }
 
-    // Emit the array's address.
-    var base = builder.buildStructGEP(pathBase, type: anyArrayType, index: 3)
-    base = builder.buildLoad(base, type: voidPtr)
-    base = builder.buildBitCast(base, type: elemIRTypePtr)
+    // Emit the array's payload address.
+    let elemIRType = lower(elemType)
+    let payload = buildPayload(of: pathBase, elemType: elemIRType)
 
     // Emit the address of the selected element.
     assert(path.index.type == .int)
     let idx = path.index.accept(&self)
-    let loc = builder.buildInBoundsGEP(base, type: elemIRType, indices: [idx])
+    let loc = builder.buildInBoundsGEP(payload, type: elemIRType, indices: [idx])
 
     return (loc: loc, origin: origin)
   }
@@ -1564,18 +1565,14 @@ public struct Emitter: ExprVisitor, PathVisitor {
     let elemType = path.type!
     _ = builder.buildCall(runtime.arrayUniq, args: [pathBaseLoc, metatype(of: elemType)])
 
+    // Emit the array's payload address.
     let elemIRType = lower(elemType)
-    let elemIRTypePtr = elemIRType.ptr
-
-    // Emit the array's address.
-    var base = builder.buildStructGEP(pathBaseLoc, type: anyArrayType, index: 3)
-    base = builder.buildLoad(base, type: voidPtr)
-    base = builder.buildBitCast(base, type: elemIRTypePtr)
+    let payload = buildPayload(of: pathBaseLoc, elemType: elemIRType)
 
     // Emit the address of the selected element.
     assert(path.index.type == .int)
     let idx = path.index.accept(&self)
-    let loc = builder.buildInBoundsGEP(base, type: elemIRType, indices: [idx])
+    let loc = builder.buildInBoundsGEP(payload, type: elemIRType, indices: [idx])
 
     return (loc: loc, origin: nil)
   }
@@ -1684,7 +1681,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     // The environment is passed as an arbitrary pointer, at the end of the parameter list.
     if withEnvironment {
-      irParamTypes.append(PointerType.toVoid)
+      irParamTypes.append(voidPtr)
     }
 
     // If the output has an address-only type, we pass it as first parameter.
@@ -1694,6 +1691,19 @@ public struct Emitter: ExprVisitor, PathVisitor {
     } else {
       return FunctionType(irParamTypes, lower(output))
     }
+  }
+
+  /// Builds the base address of an array's payload.
+  ///
+  /// - Parameters:
+  ///   - array: A type-erased array value.
+  ///   - elemType: The type of the array's elements.
+  private func buildPayload(of array: IRValue, elemType: IRType) -> IRValue {
+    var payload = builder.buildStructGEP(array, type: anyArrayType, index: 0)
+    payload = builder.buildLoad(payload, type: voidPtr)
+    payload = builder.buildGEP(payload, type: voidPtr.pointee, indices: [anyArrayHeaderSize])
+    payload = builder.buildBitCast(payload, type: elemType.ptr)
+    return payload
   }
 
   /// Builds a closure.
@@ -1717,7 +1727,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     builder.buildStore(
-      builder.buildBitCast(fn, type: PointerType.toVoid),
+      builder.buildBitCast(fn, type: voidPtr),
       to: gep(index: 0))
     builder.buildStore(
       env,
