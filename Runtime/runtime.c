@@ -208,11 +208,3 @@ void mvs_print_f64(double value) {
 }
 
 void mvs_sink(void* arg) {}
-
-double mvs_uptime_nanoseconds() {
-  struct timespec spec;
-  if (clock_gettime(CLOCK_REALTIME, &spec) == -1) {
-    return 0;
-  }
-  return spec.tv_sec * 1000000000L + spec.tv_nsec;
-}
