@@ -206,5 +206,3 @@ void mvs_print_i64(int64_t value) {
 void mvs_print_f64(double value) {
   printf("%f\n", value);
 }
-
-void mvs_sink(void* arg) {}

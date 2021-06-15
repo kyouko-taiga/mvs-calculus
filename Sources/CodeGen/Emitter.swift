@@ -183,6 +183,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       let benchStart = builder.buildAlloca(type: FloatType.double, name: "bench_start")
       let benchCount = builder.buildAlloca(type: IntType.int64, name: "bench_count")
       let benchValue = builder.buildAlloca(type: programIRType)
+      builder.buildStore(builder.buildCall(runtime.uptimeNanoseconds, args: []), to: benchStart)
       builder.buildStore(i64(n), to: benchCount)
 
       // Create basic block to handle the benchmark's control flow.
@@ -198,7 +199,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
       builder.buildCondBr(condition: condition, then: body, else: exit)
 
       builder.positionAtEnd(of: body)
-      builder.buildStore(builder.buildCall(runtime.uptimeNanoseconds, args: []), to: benchStart)
       builder.buildStore(
         builder.buildSub(builder.buildLoad(benchCount, type: IntType.int64), i64(1)),
         to: benchCount)
@@ -209,18 +209,20 @@ public struct Emitter: ExprVisitor, PathVisitor {
       } else {
         emit(copy: &program.entry, to: benchValue)
       }
+      builder.buildBr(head)
 
       // Emit the end of the benchmark.
+      builder.positionAtEnd(of: exit)
+      let value = builder.buildBitCast(benchValue, type: FloatType.double.ptr)
+      _ = builder.buildCall(
+        runtime.printF64,
+        args: [builder.buildLoad(value, type: FloatType.double)])
+
+      // Report the total execution time.
       let delta = builder.buildSub(
         builder.buildCall(runtime.uptimeNanoseconds, args: []),
         builder.buildLoad(benchStart, type: FloatType.double))
       _ = builder.buildCall(runtime.printF64, args: [delta])
-      builder.buildBr(head)
-
-      // Use the computed value.
-      builder.positionAtEnd(of: exit)
-      let value = builder.buildBitCast(benchValue, type: voidPtr)
-      _ = builder.buildCall(runtime.sink, args: [value])
     } else {
       // Emit the program's expression.
       let value = program.entry.accept(&self)
