@@ -216,9 +216,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
         builder.buildLoad(benchStart!, type: FloatType.double))
       _ = builder.buildCall(runtime.printF64, args: [delta])
       builder.buildBr(entry)
+    } else {
+      builder.buildBr(exit)
     }
 
-    builder.buildBr(exit)
     builder.positionAtEnd(of: exit)
     builder.buildRet(IntType.int32.constant(0))
 
