@@ -1328,6 +1328,19 @@ public struct Emitter: ExprVisitor, PathVisitor {
   }
 
   public mutating func visit(_ expr: inout BindingExpr) -> IRValue {
+    func cont(_ value: IRValue) -> IRValue {
+      // Update the bindings.
+      let oldBindings = bindings
+      bindings[expr.decl.name] = value
+
+      // Emit the body of the expression.
+      let body = expr.body.accept(&self)
+
+      // Restore the bindings.
+      bindings = oldBindings
+      return body
+    }
+
     // If the binding declares a function, attempts to define it globally.
     if bindings[expr.decl.name] == nil,
        var decl = expr.initializer as? FuncExpr
@@ -1337,20 +1350,32 @@ public struct Emitter: ExprVisitor, PathVisitor {
       // If the function has no captures, then it can be emitted as a global symbol.
       let captures = decl.collectCaptures(excluding: { bindings[$0] is Function })
       if captures.isEmpty {
-        // Update the bindings.
-        let oldBindings = bindings
-        bindings[expr.decl.name] = emitGlobalFunction(
+        let value = emitGlobalFunction(
           decl      : &decl,
           name      : "_g" + expr.decl.name,
           inlinable : !expr.decl.name.hasPrefix("noinline_"))
-
-        // Emit the body of the expression.
-        let body = expr.body.accept(&self)
-
-        // Restore the bindings.
-        bindings = oldBindings
-        return body
+        return cont(value)
       }
+    }
+
+    // If the binding is constant and initialized by a constant lvalue, we can create an alias and
+    // avoid copying. An exception must be made for functions, as stateful closures may mutate when
+    // they are called.
+    if var path = expr.initializer as? Path,
+       !path.type!.isFuncType,
+       path.mutability! == .let,
+       expr.decl.mutability == .let
+    {
+      // Emit the l-value corresponding to the path.
+      let (loc, origin) = path.accept(pathVisitor: &self)
+      let value = cont(loc)
+
+      // Drop the path origin if necessary.
+      if let (value, type) = origin {
+        emit(drop: value, type: type)
+      }
+
+      return value
     }
 
     // If the body of the expression is the binding itself, return its value directly.
@@ -1371,19 +1396,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       emit(copy: &expr.initializer, to: alloca)
     }
 
-    // Update the bindings.
-    let oldBindings = bindings
-    bindings[expr.decl.name] = alloca
-
-    // Emit the body of the expression.
-    let body = expr.body.accept(&self)
-
-    // Deinitialize the binding's value.
-    emit(drop: alloca, type: expr.initializer.type!)
-
-    // Restore the bindings.
-    bindings = oldBindings
-    return body
+    return cont(alloca)
   }
 
 

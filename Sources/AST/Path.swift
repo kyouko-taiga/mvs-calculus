@@ -6,6 +6,9 @@ public protocol Path: Expr {
   /// The root of the path.
   var root: Expr { get }
 
+  /// The mutability of the path.
+  var mutability: MutabilityQualifier? { get }
+
   /// Accepts the given visitor.
   ///
   /// - Parameter visitor: An expression visitor.
@@ -24,6 +27,8 @@ public struct NamePath: Path {
   public var type: Type?
 
   public var root: Expr { self }
+
+  public var mutability: MutabilityQualifier?
 
   public init(name: String, range: SourceRange) {
     self.name = name
@@ -59,6 +64,10 @@ public struct PropPath: Path {
     return (base as? Path)?.root ?? base
   }
 
+  public var mutability: MutabilityQualifier? {
+    return (base as? Path)?.mutability ?? .let
+  }
+
   public init(base: Expr, name: String, range: SourceRange) {
     self.base = base
     self.name = name
@@ -92,6 +101,10 @@ public struct ElemPath: Path {
 
   public var root: Expr {
     return (base as? Path)?.root ?? base
+  }
+
+  public var mutability: MutabilityQualifier? {
+    return (base as? Path)?.mutability ?? .let
   }
 
   public init(base: Expr, index: Expr, range: SourceRange) {
