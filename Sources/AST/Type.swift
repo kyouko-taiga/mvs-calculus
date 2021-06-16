@@ -24,6 +24,14 @@ public indirect enum Type: Hashable {
   /// The type of an ill-typed AST node.
   case error
 
+  /// Indicates whether this type is a function type.
+  public var isFuncType: Bool {
+    switch self {
+    case .func: return true
+    default   : return false
+    }
+  }
+
   /// Returns the declaration of the member with the given name, if it exists.
   public func member(named name: String) -> StructProp? {
     switch self {
