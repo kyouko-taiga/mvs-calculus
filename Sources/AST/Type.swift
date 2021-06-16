@@ -27,8 +27,16 @@ public indirect enum Type: Hashable {
   /// Indicates whether this type is a function type.
   public var isFuncType: Bool {
     switch self {
-    case .func: return true
-    default   : return false
+    case .func  : return true
+    default     : return false
+    }
+  }
+
+  /// Indicates whether this type is an `inout` type.
+  public var isInoutType: Bool {
+    switch self {
+    case .inout : return true
+    default     : return false
     }
   }
 

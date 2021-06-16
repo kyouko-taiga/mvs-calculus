@@ -1102,6 +1102,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   }
 
   public mutating func visit(_ expr: inout StructExpr) -> IRValue {
+    guard case .struct(_, let props) = expr.type else { unreachable() }
     let structType = lower(expr.type!)
     assert(structType is StructType)
 
@@ -1112,7 +1113,24 @@ public struct Emitter: ExprVisitor, PathVisitor {
     // Initialize each property.
     for i in 0 ..< expr.args.count {
       let field = builder.buildStructGEP(alloca, type: structType, index: i)
-      if isMovable(expr.args[i]) {
+
+      // Just like for binding initialization, if the property is constant and its the argument is
+      // expressed by a constant lvalue, we can create an alias and avoid copying.
+      if var path = expr.args[i] as? NamePath,
+         props[i].mutability == .let,
+         path.mutability! == .let,
+         path.type!.isAddressOnly,
+         !path.type!.isFuncType
+      {
+        // Emit the lvalue corresponding to the path.
+        let (loc, origin) = path.accept(pathVisitor: &self)
+        emit(move: loc, type: expr.args[i].type!, to: field)
+
+        // Drop the path origin if necessary.
+        if let (value, type) = origin {
+          emit(drop: value, type: type)
+        }
+      } else if isMovable(expr.args[i]) {
         emit(move: &expr.args[i], to: field)
       } else {
         emit(init: field, type: expr.args[i].type!)
@@ -1239,8 +1257,26 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     // Emit the arguments.
     var args: [IRValue] = []
+    var tmps: [(IRValue, Type)] = []
+
     for i in 0 ..< expr.args.count {
-      args.append(expr.args[i].accept(&self))
+      // Just like for binding initialization, if the argument is expressed by a constant lvalue,
+      // we can create an alias and avoid copying.
+      if var path = expr.args[i] as? NamePath,
+         path.mutability! == .let,
+         path.type!.isAddressOnly,
+         !path.type!.isInoutType,
+         !path.type!.isFuncType
+      {
+        // Emit the lvalue corresponding to the path.
+        let (loc, origin) = path.accept(pathVisitor: &self)
+        args.append(loc)
+        origin.map({ tmps.append($0) })
+      } else {
+        let tmp = expr.args[i].accept(&self)
+        args.append(tmp)
+        tmps.append((tmp, expr.args[i].type!))
+      }
     }
 
     if let e = env {
@@ -1254,6 +1290,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
       _ = builder.buildCall(fun, args: [result] + args)
     } else {
       result = builder.buildCall(fun, args: args)
+    }
+
+    for (value, type) in tmps {
+      emit(drop: value, type: type)
     }
 
     return result
@@ -1362,11 +1402,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
     // avoid copying. An exception must be made for functions, as stateful closures may mutate when
     // they are called.
     if var path = expr.initializer as? Path,
-       !path.type!.isFuncType,
+       expr.decl.mutability == .let,
        path.mutability! == .let,
-       expr.decl.mutability == .let
+       !path.type!.isFuncType
     {
-      // Emit the l-value corresponding to the path.
+      // Emit the lvalue corresponding to the path.
       let (loc, origin) = path.accept(pathVisitor: &self)
       let value = cont(loc)
 
