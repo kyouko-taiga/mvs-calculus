@@ -906,22 +906,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       }
 
     case .array:
-      // _ = builder.buildCall(runtime.arrayCopy, args: [loc, val])
-      let dst = builder.buildStructGEP(loc, type: anyArrayType, index: 0)
-      let src = builder.buildStructGEP(val, type: anyArrayType, index: 0)
-      let val = builder.buildLoad(src, type: voidPtr)
-      builder.buildStore(val, to: dst)
-
-      let elseIB = builder.currentFunction!.appendBasicBlock(named: "else")
-      let thenIB = builder.currentFunction!.appendBasicBlock(named: "then")
-      builder.buildCondBr(condition: builder.buildIsNull(val), then: elseIB, else: thenIB)
-      builder.positionAtEnd(of: thenIB)
-
-      let counterLoc = builder.buildBitCast(val, type: IntType.int64.ptr)
-      let counterVal = builder.buildLoad(counterLoc, type: IntType.int64)
-      builder.buildStore(builder.buildAdd(counterVal, i64(1)), to: counterLoc)
-      builder.buildBr(elseIB)
-      builder.positionAtEnd(of: elseIB)
+      _ = builder.buildCall(runtime.arrayCopy, args: [loc, val])
 
     case .func:
       let closure = builder.buildBitCast(val, type: anyClosureType.ptr)
