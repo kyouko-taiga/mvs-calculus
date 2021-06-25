@@ -1368,13 +1368,18 @@ public struct Emitter: ExprVisitor, PathVisitor {
   }
 
   public mutating func visit(_ expr: inout BindingExpr) -> IRValue {
-    func cont(_ value: IRValue) -> IRValue {
+    func cont(_ value: IRValue, shouldDrop: Bool) -> IRValue {
       // Update the bindings.
       let oldBindings = bindings
       bindings[expr.decl.name] = value
 
       // Emit the body of the expression.
       let body = expr.body.accept(&self)
+
+      // Drop the initializer expression if necessary.
+      if shouldDrop {
+        emit(drop: value, type: expr.initializer.type!)
+      }
 
       // Restore the bindings.
       bindings = oldBindings
@@ -1394,7 +1399,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
           decl      : &decl,
           name      : "_g" + expr.decl.name,
           inlinable : !expr.decl.name.hasPrefix("noinline_"))
-        return cont(value)
+        return cont(value, shouldDrop: false)
       }
     }
 
@@ -1408,7 +1413,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     {
       // Emit the lvalue corresponding to the path.
       let (loc, origin) = path.accept(pathVisitor: &self)
-      let value = cont(loc)
+      let value = cont(loc, shouldDrop: false)
 
       // Drop the path origin if necessary.
       if let (value, type) = origin {
@@ -1436,7 +1441,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       emit(copy: &expr.initializer, to: alloca)
     }
 
-    return cont(alloca)
+    return cont(alloca, shouldDrop: true)
   }
 
 
