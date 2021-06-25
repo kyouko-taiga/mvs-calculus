@@ -1,37 +1,41 @@
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+constexpr int64_t ARRAY_HEADER = ((int64_t)sizeof(int64_t) * 3);
+
+extern "C" {
 
 /// A metatype.
-typedef struct {
+struct mvs_MetaType {
 
   /// The size (a.k.a. stride) of the type.
   const int64_t size;
 
   /// The type-erased zero-inititiazer for instances of the type.
   ///
-  /// If `NULL`, then instances of the type are considered "trivial".
+  /// If null, then instances of the type are considered "trivial".
   const void (*init)(void*);
 
   /// The type-erased destructor for instances of the type.
   ///
-  /// If `NULL`, then instances of the type are considered "trivial".
+  /// If null, then instances of the type are considered "trivial".
   const void (*drop)(void*);
 
   /// The type-erased copy function for instances of the type.
   ///
-  /// If `NULL`, then instances of the type are considered "trivial".
+  /// If null, then instances of the type are considered "trivial".
   const void (*copy)(void*, void*);
 
   /// The type-erased equality function for instances of the type.
   const int64_t (*equal)(void*, void*);
 
-} mvs_MetaType;
+};
 
 /// A type-erased array.
-typedef struct {
+struct mvs_AnyArray {
 
   /// A pointer to the array's storage.
   ///
@@ -42,20 +46,23 @@ typedef struct {
   /// If the pointer is null, then it is assumed that the array has a 0 capacity.
   void* storage;
 
-} mvs_AnyArray;
-
-#define ARRAY_HEADER ((int64_t)sizeof(int64_t) * 3)
+};
 
 void* mvs_malloc(int64_t size) {
-  void* buf = malloc(size);
-  memset(buf, 0, size);
-  return buf;
+  return malloc(size);
 }
 
 void mvs_free(void* ptr) {
   free(ptr);
 }
 
+/// Initializes an array structure.
+///
+/// - Parameters:
+///   - array: A pointer an uninitialized array structure.
+///   - elem_type: A pointer to the metatype of the type of the array's elements.
+///   - count: The number of elements in the array.
+///   - size: The size of each element, in bytes.
 void mvs_array_init(mvs_AnyArray* array,
                     const mvs_MetaType* elem_type,
                     int64_t count,
@@ -79,8 +86,8 @@ void mvs_array_init(mvs_AnyArray* array,
     header[2] = capacity;
 
     // Initialize the storage's payload.
-    void* payload = array->storage + ARRAY_HEADER;
-    if (elem_type->init != NULL) {
+    uint8_t* payload = (uint8_t*)array->storage + ARRAY_HEADER;
+    if (elem_type->init != nullptr) {
       for (size_t i = 0; i < count; ++i) {
         elem_type->init(&payload[i * size]);
       }
@@ -88,14 +95,14 @@ void mvs_array_init(mvs_AnyArray* array,
       memset(payload, 0, count * size);
     }
   } else {
-    array->storage = NULL;
+    array->storage = nullptr;
   }
 }
 
-/// Deinitializes `array`, deallocating memory as necessary.
+/// Destroys an array reference, deallocating memory as necessary.
 ///
 /// - Parameters:
-///   - array: A pointer to the array that should be deinitialized.
+///   - array: A pointer to the array that should be destroyed.
 ///   - elem_type: A pointer to the metatype of the type of the array's elements.
 void mvs_array_drop(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
 #ifdef DEBUG
@@ -112,7 +119,7 @@ void mvs_array_drop(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
   }
 
   if (elem_type->drop != NULL) {
-    void* payload = array->storage + ARRAY_HEADER;
+    uint8_t* payload = (uint8_t*)array->storage + ARRAY_HEADER;
     for (size_t i = 0; i < header[1]; ++i) {
       elem_type->drop(&payload[i * elem_type->size]);
     }
@@ -126,6 +133,11 @@ void mvs_array_drop(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
   array->storage = NULL;
 }
 
+/// Copies an array.
+///
+/// - Parameters:
+///   - dst: A pointer to the destination array.
+///   - src: A pointer to the source array.
 void mvs_array_copy(mvs_AnyArray* dst, mvs_AnyArray* src) {
 #ifdef DEBUG
   fprintf(stderr, "mvs_array_copy(%p, %p)\n", dst, src);
@@ -165,8 +177,8 @@ void mvs_array_uniq(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
   if (elem_type->copy == NULL) {
     memcpy(unique_storage, array->storage, ARRAY_HEADER + header[2]);
   } else {
-    void* src = array->storage + ARRAY_HEADER;
-    void* dst = unique_storage + ARRAY_HEADER;
+    uint8_t* src = (uint8_t*)array->storage + ARRAY_HEADER;
+    uint8_t* dst = (uint8_t*)unique_storage + ARRAY_HEADER;
     for (size_t i = 0; i < header[1]; ++i) {
       elem_type->copy(&dst[i * elem_type->size], &src[i * elem_type->size]);
     }
@@ -201,8 +213,8 @@ int64_t mvs_array_equal(const mvs_AnyArray* lhs,
     return 0;
   }
 
-  void* lhs_payload = lhs->storage + ARRAY_HEADER;
-  void* rhs_payload = rhs->storage + ARRAY_HEADER;
+  uint8_t* lhs_payload = (uint8_t*)lhs->storage + ARRAY_HEADER;
+  uint8_t* rhs_payload = (uint8_t*)rhs->storage + ARRAY_HEADER;
   for (int64_t i = 0; i < lhs_header[1]; ++i) {
     void* a = &lhs_payload[i * elem_type->size];
     void* b = &rhs_payload[i * elem_type->size];
@@ -213,10 +225,19 @@ int64_t mvs_array_equal(const mvs_AnyArray* lhs,
   return 1;
 }
 
+/// Returns the number of nanoseconds since boot, excluding any time the system spent asleep.
+double mvs_uptime_nanoseconds() {
+  auto clock = std::chrono::high_resolution_clock::now();
+  auto delta = std::chrono::duration_cast<std::chrono::nanoseconds>(clock.time_since_epoch());
+  return delta.count();
+}
+
 void mvs_print_i64(int64_t value) {
   printf("%lli\n", value);
 }
 
 void mvs_print_f64(double value) {
   printf("%f\n", value);
+}
+
 }
