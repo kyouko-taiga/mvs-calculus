@@ -1387,9 +1387,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // If the binding declares a function, attempts to define it globally.
-    if bindings[expr.decl.name] == nil,
-       var decl = expr.initializer as? FuncExpr
-    {
+    if var decl = expr.initializer as? FuncExpr, bindings[expr.decl.name] == nil {
       defer { expr.initializer = decl }
 
       // If the function has no captures, then it can be emitted as a global symbol.
@@ -1448,17 +1446,20 @@ public struct Emitter: ExprVisitor, PathVisitor {
   public mutating func visit(_ expr: inout AssignExpr) -> IRValue {
     // Emit the location, applying copy-on-write if needed.
     let (loc, origin) = uniquify(path: &expr.lvalue)
-    // let (loc, origin) = expr.lvalue.accept(pathVisitor: &self)
-    assert(origin == nil, "left operand is prefixed by an rvalue")
+    assert(origin == nil, "left operand is not a lvalue")
+
+    // Emit the right operand *after* the left one.
+    let tmp = expr.rvalue.accept(&self)
 
     // Drop the current value held by the left operand.
     emit(drop: loc, type: expr.lvalue.type!)
 
     // Emit the assignment.
     if isMovable(expr.rvalue) {
-      emit(move: &expr.rvalue, to: loc)
+      emit(move: tmp, type: expr.rvalue.type!, to: loc)
     } else {
-      emit(copy: &expr.rvalue, to: loc)
+      emit(copy: tmp, type: expr.rvalue.type!, to: loc)
+      emit(drop: tmp, type: expr.rvalue.type!)
     }
 
     // Emit the body of the expression.
