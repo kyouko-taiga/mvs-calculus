@@ -160,10 +160,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
     metatypes = [:]
     module.targetTriple = target.triple
 
-    // Emit the type declarations.
+    // Emit all type declarations.
     for decl in program.types {
-      // Create the type.
       guard case .struct(_, let props) = decl.type else { continue }
+
+      // Create the type.
       let irType = builder.createStruct(
         name : decl.name,
         types: props.map({ lower($0.type) }))
@@ -353,7 +354,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // Create the type's destructor.
-    var dropFn = builder.addFunction("_AnyClosure.te_drop", type: anyInitFuncType)
+    var dropFn = builder.addFunction("_AnyClosure.te_drop", type: anyDropFuncType)
     dropFn.linkage = .private
     dropFn.addAttribute(.alwaysinline , to: .function)
     do {
@@ -425,7 +426,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       builder.buildRetVoid()
 
       // Create the type's destructor.
-      dropFn = builder.addFunction("\(decl.name).te_drop", type: anyInitFuncType)
+      dropFn = builder.addFunction("\(decl.name).te_drop", type: anyDropFuncType)
       dropFn!.linkage = .private
       dropFn!.addAttribute(.alwaysinline , to: .function)
 
@@ -501,7 +502,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // Create the type's destructor.
-    var dropFn = builder.addFunction("\(prefix).te_drop", type: anyInitFuncType)
+    var dropFn = builder.addFunction("\(prefix).te_drop", type: anyDropFuncType)
     dropFn.linkage = .private
     dropFn.addAttribute(.alwaysinline , to: .function)
     do {
@@ -865,6 +866,14 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// Drops the given value.
   func emit(drop val: IRValue, type: Type) {
     switch type {
+    case .struct(name: _, let props) where !type.isTrivial:
+      let irType = lower(type)
+      for (i, prop) in props.enumerated() where !prop.type.isTrivial {
+        assert(prop.type.isAddressOnly)
+        let field = builder.buildStructGEP(val, type: irType, index: i)
+        emit(drop: field, type: prop.type)
+      }
+
     case .array(let elemType):
       _ = builder.buildCall(runtime.arrayDrop, args: [val, metatype(of: elemType)])
 
@@ -872,7 +881,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       emit(dropClosure: val)
 
     default:
-      break
+      assert(type.isTrivial, "missing drop handler for non-trivial type")
     }
   }
 
