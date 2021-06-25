@@ -193,28 +193,28 @@ public struct Emitter: ExprVisitor, PathVisitor {
       let body = main.appendBasicBlock(named: "bench_body")
       let head = main.appendBasicBlock(named: "bench_head")
       let exit = main.appendBasicBlock(named: "bench_exit")
-      builder.buildBr(head)
+      builder.buildBr(body)
 
-      // Emit the start of the benchmark.
+      // Emit the head of the benchmark.
       builder.positionAtEnd(of: head)
-      let condition = builder.buildICmp(
-        builder.buildLoad(benchCount, type: IntType.int64), i64(0), .signedGreaterThan)
+      emit(drop: benchValue, type: programType)
+      let tmp0 = builder.buildLoad(benchCount, type: IntType.int64)
+      let condition = builder.buildICmp(tmp0, i64(0), .signedGreaterThan)
       builder.buildCondBr(condition: condition, then: body, else: exit)
 
+      // Emit the body of the benchmark (i.e., the program under test).
       builder.positionAtEnd(of: body)
-      builder.buildStore(
-        builder.buildSub(builder.buildLoad(benchCount, type: IntType.int64), i64(1)),
-        to: benchCount)
-
-      // Emit the program's expression.
       if isMovable(program.entry) {
         emit(move: &program.entry, to: benchValue)
       } else {
         emit(copy: &program.entry, to: benchValue)
       }
+
+      let tmp1 = builder.buildLoad(benchCount, type: IntType.int64)
+      builder.buildStore(builder.buildSub(tmp1, i64(1)), to: benchCount)
       builder.buildBr(head)
 
-      // Emit the end of the benchmark.
+      // Emit the tail of the benchmark.
       builder.positionAtEnd(of: exit)
       let value = builder.buildBitCast(benchValue, type: FloatType.double.ptr)
       _ = builder.buildCall(
