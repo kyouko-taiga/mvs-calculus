@@ -9,6 +9,16 @@ public protocol Path: Expr {
   /// The mutability of the path.
   var mutability: MutabilityQualifier? { get }
 
+  /// Returns whether this path is statically known to denote the same location as another path.
+  ///
+  /// - Important: The method assumes that both paths are in the same lexical scope, i.e., that all
+  ///   names are bound to the same declaration.
+  ///
+  /// - Parameter other: Another path.
+  /// - Returns: `true` if this path and `other` are lvalues statically known to denote the same
+  ///   location; otherwise, `false`.
+  func denotesSameLocation(as other: Path) -> Bool
+
   /// Accepts the given visitor.
   ///
   /// - Parameter visitor: An expression visitor.
@@ -33,6 +43,11 @@ public struct NamePath: Path {
   public init(name: String, range: SourceRange) {
     self.name = name
     self.range = range
+  }
+
+  public func denotesSameLocation(as other: Path) -> Bool {
+    guard let rPath = other as? NamePath else { return false }
+    return name == rPath.name
   }
 
   public mutating func accept<V>(_ visitor: inout V) -> V.ExprResult where V: ExprVisitor {
@@ -74,6 +89,15 @@ public struct PropPath: Path {
     self.range = range
   }
 
+  public func denotesSameLocation(as other: Path) -> Bool {
+    guard let rPath = other as? PropPath,
+          let rBase = rPath.base as? Path,
+          let lBase = base as? Path
+    else { return false }
+
+    return (name == rPath.name) && lBase.denotesSameLocation(as: rBase)
+  }
+
   public mutating func accept<V>(_ visitor: inout V) -> V.ExprResult where V: ExprVisitor {
     visitor.visit(&self)
   }
@@ -111,6 +135,19 @@ public struct ElemPath: Path {
     self.base = base
     self.index = index
     self.range = range
+  }
+
+  public func denotesSameLocation(as other: Path) -> Bool {
+    guard let rPath = other as? ElemPath,
+          let rBase = rPath.base as? Path,
+          let lBase = base as? Path
+    else { return false }
+
+    guard let lIndex = index as? IntExpr,
+          let rIndex = index as? IntExpr
+    else { return false }
+
+    return (lIndex.value == rIndex.value) && lBase.denotesSameLocation(as: rBase)
   }
 
   public mutating func accept<V>(_ visitor: inout V) -> V.ExprResult where V: ExprVisitor {

@@ -1444,6 +1444,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
 
   public mutating func visit(_ expr: inout AssignExpr) -> IRValue {
+    // Nothing to do if we're assigning the variable to itself (e.g., `a = a in ...`).
+    if let rPath = expr.rvalue as? Path, expr.lvalue.denotesSameLocation(as: rPath) {
+      return expr.body.accept(&self)
+    }
+
     // Emit the location, applying copy-on-write if needed.
     let (loc, origin) = uniquify(path: &expr.lvalue)
     assert(origin == nil, "left operand is not a lvalue")
