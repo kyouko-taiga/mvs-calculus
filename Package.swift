@@ -18,7 +18,7 @@ let package = Package(
     .target(
       name: "Driver",
       dependencies: [
-        "AST", "CodeGen", "Parse", "Sema",
+        "AST", "CodeGen", "LLVM", "Parse", "Sema",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
       ]
     ),
