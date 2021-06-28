@@ -24,6 +24,9 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// Indicates whether the emitter should generate a print of the program's value.
   public let shouldEmitPrint: Bool
 
+  /// The maximum size allowed for stack-allocated arrays.
+  public let maxStackArraySize: Int
+
   /// The builder that is used to generate LLVM IR instructions.
   var builder: IRBuilder!
 
@@ -133,15 +136,22 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
   /// Creates a new emitter.
   ///
-  /// - Parameter target: The machine target for the generated IR.
+  /// - Parameters:
+  ///   - target: The machine target for the generated IR.
+  ///   - mode: The code generation mode (defaut: `.debug`).
+  ///   - shouldEmitPrint: A Boolean value that indicates whether the emitter should generate a
+  ///     print of the program’s value.
+  ///   - maxStackArraySize: The maximum size for stack-allocated arrays.
   public init(
-    target          : TargetMachine? = nil,
-    mode            : EmitterMode = .debug,
-    shouldEmitPrint : Bool = false
+    target            : TargetMachine? = nil,
+    mode              : EmitterMode = .debug,
+    shouldEmitPrint   : Bool = false,
+    maxStackArraySize : Int = 256
   ) throws {
     self.target = try target ?? TargetMachine()
     self.mode = mode
     self.shouldEmitPrint = shouldEmitPrint
+    self.maxStackArraySize = maxStackArraySize
   }
 
   /// Emit the LLVM IR of the given program.
@@ -1405,6 +1415,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
       }
     }
 
+    // If the body of the expression is the binding itself, return its value directly.
+    if let path = expr.body as? NamePath, path.name == expr.decl.name {
+      return expr.initializer.accept(&self)
+    }
+
     // If the binding is constant and initialized by a constant lvalue, we can create an alias and
     // avoid copying. An exception must be made for functions, as stateful closures may mutate when
     // they are called.
@@ -1425,12 +1440,57 @@ public struct Emitter: ExprVisitor, PathVisitor {
       return value
     }
 
-    // If the body of the expression is the binding itself, return its value directly.
-    if let path = expr.body as? NamePath, path.name == expr.decl.name {
-      return expr.initializer.accept(&self)
+    let alloca: IRValue
+
+    // If the binding is initialized by an array literal, try to allocate it on the stack.
+    if var array = expr.initializer as? ArrayExpr {
+      // If the array is empty, then we can just zero-initialize its structure.
+      if array.elems.isEmpty {
+        alloca = addEntryAlloca(type: anyArrayType, name: expr.decl.name)
+        builder.buildStore(anyArrayType.null(), to: alloca)
+        return cont(alloca, shouldDrop: false)
+      }
+
+      // Check that the array never escapes and is small enough to be allocated on the stack.
+      guard case .array(let elemType) = expr.decl.type else { unreachable() }
+      let elemIRType = lower(elemType)
+      let elemSize   = target.dataLayout.allocationSize(of: elemIRType)
+      let arraySize  = Int(elemSize.valueInBits(radix: 8) / 8) * array.elems.count
+      var analyzer   = ArrayEscapeAnalzyer(name: expr.decl.name)
+
+      if arraySize <= maxStackArraySize && !expr.body.accept(&analyzer) {
+        alloca = addEntryAlloca(type: anyArrayType, name: expr.decl.name)
+        let payload = addEntryAlloca(
+          type: elemIRType, count: i64(array.elems.count), name: expr.decl.name + ".payload")
+
+        for i in 0 ..< array.elems.count {
+          let gep = builder.buildInBoundsGEP(payload, type: elemIRType, indices: [i64(i)])
+          if isMovable(array.elems[i]) {
+            emit(move: &array.elems[i], to: gep)
+          } else {
+            emit(init: gep, type: elemType)
+            emit(copy: &array.elems[i], to: gep)
+          }
+        }
+
+        builder.buildStore(
+          builder.buildBitCast(payload, type: voidPtr),
+          to: builder.buildStructGEP(alloca, type: anyArrayType, index: 0))
+        let result = cont(alloca, shouldDrop: false)
+
+        for i in 0 ..< array.elems.count {
+          let gep = builder.buildInBoundsGEP(payload, type: elemIRType, indices: [i64(i)])
+          if elemType.isAddressOnly {
+            emit(drop: gep, type: elemType)
+          } else {
+            emit(drop: builder.buildLoad(gep, type: elemIRType), type: elemType)
+          }
+        }
+
+        return result
+      }
     }
 
-    let alloca: IRValue
     if isMovable(expr.initializer) {
       // Move the initializer's value.
       alloca = expr.initializer.accept(&self)
