@@ -1,5 +1,6 @@
 import Foundation
 import ArgumentParser
+import LLVM
 
 import AST
 import CodeGen
@@ -11,11 +12,17 @@ struct MVS: ParsableCommand {
   @Argument(help: "The source program.", transform: URL.init(fileURLWithPath:))
   var inputFile: URL
 
+  @Option(name: .short, help: "The output file.", transform: URL.init(fileURLWithPath:))
+  var outputFile: URL?
+
   @Option(help: "Wrap the program inside a benchmark.")
   var benchmark: Int?
 
-  @Option(help: "The maximum size for stack-allocated arrays.")
+  @Option(help: "Set the maximum size for stack-allocated arrays.")
   var maxStackArraySize: Int = 256
+
+  @Flag(help: "Dump the LLVM representation of the program.")
+  var emitLLVM: Bool = false
 
   @Flag(name: [.customShort("O")], help: "Compile with optimizations.")
   var optimize: Bool = false
@@ -48,12 +55,20 @@ struct MVS: ParsableCommand {
       mode = .debug
     }
 
+    let target = try TargetMachine()
     var emitter = try Emitter(
+      target            : target,
       mode              : mode,
       shouldEmitPrint   : !noPrint,
       maxStackArraySize : maxStackArraySize)
     let module = try emitter.emit(program: &program)
-    module.dump()
+
+    if emitLLVM {
+      module.dump()
+    } else {
+      let output = (outputFile ?? inputFile.appendingPathExtension("o")).path
+      try target.emitToFile(module: module, type: .object, path: output)
+    }
   }
 
 }
