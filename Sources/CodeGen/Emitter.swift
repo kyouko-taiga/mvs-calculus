@@ -251,9 +251,15 @@ public struct Emitter: ExprVisitor, PathVisitor {
       throw error
     }
 
-    let pipeliner = PassPipeliner(module: module)
-    pipeliner.addStandardModulePipeline("opt", optimization: .default, size: .default)
-    pipeliner.execute()
+    switch mode {
+    case .release, .benchmark:
+      let pipeliner = PassPipeliner(module: module)
+      pipeliner.addStandardModulePipeline("opt", optimization: .default, size: .default)
+      pipeliner.execute()
+
+    case .debug:
+      break
+    }
 
     return module
   }
