@@ -101,7 +101,7 @@ struct ArrayEscapeAnalzyer: ExprVisitor {
     }
 
     return expr.base.accept(&self)
-        && expr.index.accept(&self)
+        || expr.index.accept(&self)
   }
 
 }
