@@ -110,11 +110,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return builder.createStruct(name : "_AnyArray", types: [voidPtr])
   }
 
-  /// Returns the stride of a type-erased array header.
-  var anyArrayHeaderSize: IRValue {
-    return builder.buildMul(stride(of: IntType.int64), i64(3))
-  }
-
   /// LLVM's `memset` intrinsic (i.e., `llvm.memset.p0i8.i64`).
   var memset: Intrinsic {
     return module.intrinsic(
@@ -1759,7 +1754,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
   private func buildPayload(of array: IRValue, elemType: IRType) -> IRValue {
     var payload = builder.buildStructGEP(array, type: anyArrayType, index: 0)
     payload = builder.buildLoad(payload, type: voidPtr)
-    payload = builder.buildGEP(payload, type: voidPtr.pointee, indices: [anyArrayHeaderSize])
     payload = builder.buildBitCast(payload, type: elemType.ptr)
     return payload
   }
