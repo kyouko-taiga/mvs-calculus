@@ -1,10 +1,9 @@
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-constexpr int64_t ARRAY_HEADER = ((int64_t)sizeof(int64_t) * 3);
 
 extern "C" {
 
@@ -37,16 +36,45 @@ struct mvs_MetaType {
 /// A type-erased array.
 struct mvs_AnyArray {
 
-  /// A pointer to the array's storage.
+  /// A pointer to the array's payload.
   ///
-  /// The storage has the following layout:
+  /// The storage of an array is a contiguous block of memory with the following layout:
   ///
-  ///     { refcount: i64; count: i64; capacity: i64; elements: T[count] }
+  ///     { header: ArrayHeader; payload: T[header.count] }
+  ///
+  /// This field is a pointer to the base address of the payload, i.e., it is the address of the
+  /// array's storage offset by `sizeof(ArrayHeader)`.
   ///
   /// If the pointer is null, then it is assumed that the array has a 0 capacity.
-  void* storage;
+  void* payload;
 
 };
+
+}
+
+/// The header of an array.
+struct ArrayHeader {
+
+  /// The number of references to the array's storage.
+  std::atomic<uint64_t> refc;
+
+  /// The number of elements in the array.
+  int64_t count;
+
+  /// The capacity of the array's payload, in bytes.
+  int64_t capacity;
+
+};
+
+/// Returns a pointer to the header of the given array.
+///
+/// - Parameter array: A pointer to an initialized array structure.
+inline ArrayHeader* get_array_header(mvs_AnyArray* array) {
+  if (array->payload == nullptr) { return nullptr; }
+  return (ArrayHeader*)((uint8_t*)array->payload - sizeof(ArrayHeader));
+}
+
+extern "C" {
 
 void* mvs_malloc(int64_t size) {
   return malloc(size);
@@ -74,28 +102,30 @@ void mvs_array_init(mvs_AnyArray* array,
   if (count > 0) {
     // Allocate new storage.
     int64_t capacity = count * size;
-    array->storage = malloc(ARRAY_HEADER + capacity);
+    auto* storage = malloc(sizeof(ArrayHeader) + capacity);
+    array->payload = (uint8_t*)storage + sizeof(ArrayHeader);
+
 #ifdef DEBUG
-    fprintf(stderr, "  alloc %lli+%lli bytes at %p\n", ARRAY_HEADER, capacity, array->storage);
+    fprintf(stderr, "  alloc %lu+%lli bytes at %p\n", sizeof(ArrayHeader), capacity, storage);
 #endif
 
     // Configure the storage's header.
-    int64_t* header = (int64_t*)array->storage;
-    header[0] = 1;
-    header[1] = count;
-    header[2] = capacity;
+    ArrayHeader* header = (ArrayHeader*)storage;
+    header->refc     = 1;
+    header->count    = count;
+    header->capacity = capacity;
 
     // Initialize the storage's payload.
-    uint8_t* payload = (uint8_t*)array->storage + ARRAY_HEADER;
+    uint8_t* payload = (uint8_t*)array->payload;
     if (elem_type->init != nullptr) {
       for (size_t i = 0; i < count; ++i) {
         elem_type->init(&payload[i * size]);
       }
     } else {
-      memset(payload, 0, count * size);
+      memset(payload, 0, capacity);
     }
   } else {
-    array->storage = nullptr;
+    array->payload = nullptr;
   }
 }
 
@@ -109,28 +139,35 @@ void mvs_array_drop(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
   fprintf(stderr, "mvs_array_drop(%p, %p)\n", array, elem_type);
 #endif
 
-  int64_t* header = (int64_t*)array->storage;
-  if ((header != NULL) && (header[0] > 1)) {
-    header[0] -= 1;
+  // Bail out if the array storage is not allocated.
+  auto* header = get_array_header(array);
+  if (header == nullptr) { return; }
+
+  // Decrement the reference counter.
+  auto value = header->refc.fetch_sub(1, std::memory_order_acq_rel);
+
+  // If the reference counter didn't reach zero, we're done.
+  if (value != 1) {
 #ifdef DEBUG
-    fprintf(stderr, "  release %p (%lli)\n", array->storage, header[0]);
+    fprintf(stderr, "  release %p (%lli)\n", header, value - 1);
 #endif
     return;
   }
 
-  if (elem_type->drop != NULL) {
-    uint8_t* payload = (uint8_t*)array->storage + ARRAY_HEADER;
-    for (size_t i = 0; i < header[1]; ++i) {
+  // If the reference counter reached zero, we must deallocate the storage.
+  if (elem_type->drop != nullptr) {
+    uint8_t* payload = (uint8_t*)array->payload;
+    for (size_t i = 0; i < header->count; ++i) {
       elem_type->drop(&payload[i * elem_type->size]);
     }
   }
 
 #ifdef DEBUG
-  fprintf(stderr, "  dealloc %p\n", array->storage);
+  fprintf(stderr, "  dealloc %p\n", header);
 #endif
 
-  free(array->storage);
-  array->storage = NULL;
+  free(header);
+  array->payload = nullptr;
 }
 
 /// Copies an array.
@@ -143,17 +180,20 @@ void mvs_array_copy(mvs_AnyArray* dst, mvs_AnyArray* src) {
   fprintf(stderr, "mvs_array_copy(%p, %p)\n", dst, src);
 #endif
 
-  // Trivial if the right hand side is null.
-  dst->storage = src->storage;
-  if (src->storage != NULL) {
-    *((int64_t*)src->storage) += 1;
+  // Copy the array reference.
+  *dst = *src;
+
+  // Increment the reference counter.
+  auto* header = get_array_header(src);
+  if (header == nullptr) { return; }
+
+  auto value = header->refc.fetch_add(1, std::memory_order_relaxed);
 #ifdef DEBUG
-    fprintf(stderr, "  retain  %p (%lli)\n", src->storage, *((int64_t*)src->storage));
+  fprintf(stderr, "  retain  %p (%lli)\n", header, value + 1);
 #endif
-  }
 }
 
-/// Creates a unique copy of `array`'s storage.
+/// Guarantees that the given array structure has a unique storage.
 ///
 /// - Parameters:
 ///   - array: A pointer to the array to uniquify.
@@ -163,34 +203,34 @@ void mvs_array_uniq(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
   fprintf(stderr, "mvs_array_uniq(%p, %p)\n", array, elem_type);
 #endif
 
-  // Nothing to do if the array's already unique.
-  int64_t* header = (int64_t*)array->storage;
-  if ((header == NULL) || (header[0] <= 1)) { return; }
+  // If the array's already unique, we're done.
+  auto* header = get_array_header(array);
+  if ((header == nullptr) || (header->refc.load(std::memory_order_acquire) == 1)) { return; }
 
   // Allocate a new storage.
-  void* unique_storage = malloc(ARRAY_HEADER + header[2]);
+  void* unique_storage = malloc(sizeof(ArrayHeader) + header->capacity);
 #ifdef DEBUG
-  fprintf(stderr, "  alloc %lli+%lli bytes at %p\n", ARRAY_HEADER, header[2], unique_storage);
+  fprintf(stderr, "  alloc %lu+%lli bytes at %p\n", sizeof(ArrayHeader), header->capacity, unique_storage);
 #endif
 
   // Copy the contents of the current storage.
   if (elem_type->copy == NULL) {
-    memcpy(unique_storage, array->storage, ARRAY_HEADER + header[2]);
+    memcpy(unique_storage, header, sizeof(ArrayHeader) + header->capacity);
   } else {
-    uint8_t* src = (uint8_t*)array->storage + ARRAY_HEADER;
-    uint8_t* dst = (uint8_t*)unique_storage + ARRAY_HEADER;
-    for (size_t i = 0; i < header[1]; ++i) {
+    uint8_t* src = (uint8_t*)array->payload;
+    uint8_t* dst = (uint8_t*)unique_storage + sizeof(ArrayHeader);
+    for (size_t i = 0; i < header->count; ++i) {
       elem_type->copy(&dst[i * elem_type->size], &src[i * elem_type->size]);
     }
   }
 
   // Decrement the reference counter on the old storage.
-  header[0] -= 1;
+  header->refc.fetch_sub(1, std::memory_order_acq_rel);
 
   // Substitute the old array's storage.
-  int64_t* new_header = (int64_t*)unique_storage;
-  new_header[0] = 1;
-  array->storage = unique_storage;
+  ArrayHeader* new_header = (ArrayHeader*)unique_storage;
+  new_header->refc = 1;
+  array->payload = (uint8_t*)unique_storage + sizeof(ArrayHeader);
 }
 
 /// Returns whether the two given arrays are equal, assuming they are of the same type.
@@ -204,18 +244,18 @@ int64_t mvs_array_equal(const mvs_AnyArray* lhs,
                         const mvs_MetaType* elem_type)
 {
   // Trivial if the arrays point to the same storage.
-  if (lhs->storage == rhs->storage) { return 1; }
+  if (lhs->payload == rhs->payload) { return 1; }
 
   // Check for element-wise equality.
-  int64_t* lhs_header = (int64_t*)lhs->storage;
-  int64_t* rhs_header = (int64_t*)rhs->storage;
-  if (lhs_header[1] != rhs_header[1]) {
+  auto* lhs_header = get_array_header(const_cast<mvs_AnyArray*>(lhs));
+  auto* rhs_header = get_array_header(const_cast<mvs_AnyArray*>(rhs));
+  if (lhs_header->count != rhs_header->count) {
     return 0;
   }
 
-  uint8_t* lhs_payload = (uint8_t*)lhs->storage + ARRAY_HEADER;
-  uint8_t* rhs_payload = (uint8_t*)rhs->storage + ARRAY_HEADER;
-  for (int64_t i = 0; i < lhs_header[1]; ++i) {
+  uint8_t* lhs_payload = (uint8_t*)lhs->payload;
+  uint8_t* rhs_payload = (uint8_t*)rhs->payload;
+  for (int64_t i = 0; i < lhs_header->count; ++i) {
     void* a = &lhs_payload[i * elem_type->size];
     void* b = &rhs_payload[i * elem_type->size];
     if (elem_type->equal(a, b) == 0) {
