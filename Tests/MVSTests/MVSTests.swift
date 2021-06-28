@@ -78,11 +78,11 @@ final class MVSTests: XCTestCase {
 
     // Get the path to the runtime library.
     let runtime = ProcessInfo.processInfo.environment["MVS_RUNTIME"]
-      ?? productsDirectory.appendingPathComponent("runtime.c").path
+      ?? productsDirectory.appendingPathComponent("runtime.cc").path
 
     // Link the module.
     let output = temporary.appendingPathComponent("\(module.name)")
-    _ = try exec("/usr/bin/clang", args: [object.path, runtime, "-lm", "-o", output.path])
+    _ = try exec("/usr/bin/clang++", args: ["-std=c++14", object.path, runtime, "-o", output.path])
 
     // Run the executable.
     return try exec(output.path)
@@ -98,6 +98,9 @@ final class MVSTests: XCTestCase {
   private func exec(_ path: String, args: [String] = []) throws -> String? {
     let pipe = Pipe()
     let process = Process()
+
+    // https://stackoverflow.com/questions/67595371
+    process.environment?["OS_ACTIVITY_DT_MODE"] = nil
 
     process.executableURL = URL(fileURLWithPath: path).absoluteURL
     process.arguments = args
