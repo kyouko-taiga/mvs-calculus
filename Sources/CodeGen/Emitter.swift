@@ -508,7 +508,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
     do {
       builder.positionAtEnd(of: initFn.appendBasicBlock(named: "entry"))
       let receiver = builder.buildBitCast(initFn.parameters[0], type: anyArrayType.ptr)
-      _ = builder.buildCall(runtime.arrayInit, args: [receiver, baseMetatype, i64(0), i64(0)])
+      builder.buildStore(anyArrayType.null(), to: receiver)
+      // _ = builder.buildCall(runtime.arrayInit, args: [receiver, baseMetatype, i64(0), i64(0)])
       builder.buildRetVoid()
     }
 
