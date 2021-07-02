@@ -490,6 +490,8 @@ def main(prefix):
     gen_print_swift.print_program(f, "Gen", program, "mvs")
   with open(f"output/{prefix}.cpp", "w") as f:
     gen_print_cpp.print_program(f, program)
+  with open(f"output/{prefix}.scala", "w") as f:
+    gen_print_scala.print_program(f, program)
 
 
 if __name__ == "__main__":

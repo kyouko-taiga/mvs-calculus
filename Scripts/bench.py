@@ -5,8 +5,13 @@ import shutil as sh
 import numpy as np
 import json
 import itertools
+import pathlib
 
 RUN_COUNT = 20
+
+
+def mkdir(path):
+  pathlib.Path(path).mkdir(parents=True, exist_ok=True)
 
 
 def main():
@@ -54,10 +59,17 @@ def main():
              stderr=subp.PIPE, stdout=subp.PIPE, check=True)
     return collect_runs_p50('./output/gen.mvs.out')
 
+  def bench_scala():
+    print('-- scala')
+    mkdir('output/src/main/scala')
+    sh.move('output/gen.scala', 'output/src/main/scala/gen.scala')
+    subp.run(['sbt', 'nativeLink'], cwd='output/')
+    return collect_runs_p50('./output/target/scala-2.12/gen-out')
+
   if not os.path.exists("output"):
     os.mkdir("output")
   with open('output/results.csv', 'w') as f:
-    f.write('cpp,swift,mvs\n')
+    f.write('cpp,swift,mvs,scala\n')
     for i in itertools.count(start=1):
       print(f"--- bench {i}")
       try:
@@ -66,7 +78,8 @@ def main():
           swift_result = bench_swift()
           cpp_result = bench_cpp()
           mvs_result = bench_mvs()
-          f.write(f"{cpp_result},{swift_result},{mvs_result}\n")
+          scala_result = bench_scala()
+          f.write(f"{cpp_result},{swift_result},{mvs_result},{scala_result}\n")
           f.flush()
         except Exception as e:
           print(f'- bench failure: {e}')
