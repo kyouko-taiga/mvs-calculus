@@ -1,3 +1,4 @@
+import os
 import subprocess as subp
 import gen
 import shutil as sh
@@ -25,35 +26,37 @@ def main():
 
   def bench_swift():
     print('-- swift')
-    subp.run(['swiftc', 'gen.swift', '-o', 'gen.swift.out'],
+    subp.run(['swiftc', 'output/gen.swift', '-o', 'output/gen.swift.out'],
              stderr=subp.PIPE, stdout=subp.PIPE, check=True)
-    return collect_runs_p50('./gen.swift.out')
+    return collect_runs_p50('./output/gen.swift.out')
 
   def bench_cpp():
     print('-- cpp')
-    subp.run(['clang++', '-O2', 'gen.cpp', '-o', 'gen.cpp.out'],
+    subp.run(['clang++', '-O2', 'output/gen.cpp', '-o', 'output/gen.cpp.out'],
              stderr=subp.PIPE, stdout=subp.PIPE, check=True)
-    return collect_runs_p50('./gen.cpp.out')
+    return collect_runs_p50('./output/gen.cpp.out')
 
   def bench_mvs():
     print('-- mvs')
     compiled = subp.run(['.build/release/mvs',
-                         '--benchmark', '1000', 'gen.mvs'],
+                         '--benchmark', '1000', 'output/gen.mvs'],
                         stderr=subp.PIPE, stdout=subp.PIPE, check=True)
-    with open("gen.mvs.ll", 'wb') as f:
+    with open("output/gen.mvs.ll", 'wb') as f:
       f.write(compiled.stderr)
     subp.run(['clang', '-S', '-emit-llvm',
-              'Runtime/runtime.c', '-o', 'Runtime/runtime.ll'],
+              'Runtime/runtime.c', '-o', 'output/runtime.ll'],
              stderr=subp.PIPE, stdout=subp.PIPE, check=True)
     subp.run(['clang++', '-O2',
-              'gen.mvs.ll',
-              'Runtime/runtime.ll',
+              'output/gen.mvs.ll',
+              'output/runtime.ll',
               'Runtime/clock.cc',
-              '-o', 'gen.mvs.out'],
+              '-o', 'output/gen.mvs.out'],
              stderr=subp.PIPE, stdout=subp.PIPE, check=True)
-    return collect_runs_p50('./gen.mvs.out')
+    return collect_runs_p50('./output/gen.mvs.out')
 
-  with open('results.csv', 'w') as f:
+  if not os.path.exists("output"):
+    os.mkdir("output")
+  with open('output/results.csv', 'w') as f:
     f.write('cpp,swift,mvs\n')
     for i in itertools.count(start=1):
       print(f"--- bench {i}")

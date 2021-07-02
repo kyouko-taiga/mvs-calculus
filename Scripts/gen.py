@@ -88,10 +88,10 @@ def print_inst(f, inst, dialect):
     f.write("    let {}: {} = {}[{}]".format(inst.name.str, inst.name.ty, inst.arr.str, inst.index))
   elif isinstance(inst, NewStructInst):
     if dialect == 'swift':
-      args = ", ".join("p{}: {}".format(n, v.str) 
+      args = ", ".join("p{}: {}".format(n, v.str)
                        for (n, v) in enumerate(inst.values))
     elif dialect == 'mvs':
-      args = ", ".join("{}".format(v.str) 
+      args = ", ".join("{}".format(v.str)
                        for v in inst.values)
     f.write("    let {}: {} = {}({})".format(inst.name.str, inst.name.ty, inst.name.ty, args))
   elif isinstance(inst, StructGetInst):
@@ -110,7 +110,7 @@ def print_func(f, func, dialect):
     if func.name.str == "f0":
       func_name = 'noinline_' + func_name
   param_pre = '_ ' if dialect == 'swift' else ''
-  params = ["{}{}: {}".format(param_pre, param.str, param.ty) 
+  params = ["{}{}: {}".format(param_pre, param.str, param.ty)
             for param in func.params]
   param_types = [str(param.ty) for param in func.params]
   all_params = ", ".join(params)
@@ -150,7 +150,7 @@ def print_program(f, name, program, dialect):
   init_values = initial_values(params)
   invoke_args = ["v" + str(n) for n, _ in enumerate(init_values)]
   input_args = ("{}: {}".format(p.str, v) for (p, v) in zip(params, init_values))
-  grad_args = ("input.{}".format(p.str) for p in params) 
+  grad_args = ("input.{}".format(p.str) for p in params)
 
   if dialect == 'swift':
     f.write('  func main() -> {} {{\n'.format(entry.name.ty))
@@ -206,14 +206,14 @@ def gen_type(weights=type_weights, array_limit=array_limit, struct_env=[]):
   actual_weights = dict(weights)
   # We want to limit nested arrays because they
   # can explode exponentially size-wise.
-  if array_limit < 4: 
+  if array_limit < 4:
     actual_weights.pop(ArrayType, None)
   # Must have at least one struct defined to
   # generate a struct type.
   if len(struct_env) == 0:
     actual_weights.pop(StructType, None)
 
-  ty = weighted_pick(actual_weights) 
+  ty = weighted_pick(actual_weights)
   if isinstance(ty, FloatingType):
     return ty
   elif ty is ArrayType:
@@ -222,7 +222,7 @@ def gen_type(weights=type_weights, array_limit=array_limit, struct_env=[]):
     # the outer length limit.
     actual_weights[ArrayType] = int(actual_weights[ArrayType]/2)
     array_limit = int(array_limit/2)
-    return ArrayType(gen_type(actual_weights, array_limit, struct_env), 
+    return ArrayType(gen_type(actual_weights, array_limit, struct_env),
                      rand.randrange(1, array_limit))
   elif ty is StructType:
     return rand.choice(struct_env)
@@ -285,7 +285,7 @@ def gen_inhabitants(name_env, ty, exclude=None):
     candidates = set(name_env[ty])
     candidates.remove(exclude)
     return list(candidates)
-  
+
 
 def gen_inhabitant(name_env, ty, exclude=None):
   options = gen_inhabitants(name_env, ty, exclude=exclude)
@@ -332,11 +332,11 @@ def gen_inst(name_env, var_names, func_name, func_env, struct_env):
     if is_inhabited(name_env, var_name.ty, n=2):
       assignable_vars.append(var_name)
 
-  inhabited_floats = gen_inhabited_types(name_env, 
+  inhabited_floats = gen_inhabited_types(name_env,
                                          predicate=is_floating_type)
-  inhabited_nonempty_arrays = gen_inhabited_types(name_env, 
+  inhabited_nonempty_arrays = gen_inhabited_types(name_env,
                                                   predicate=is_nonempty_array_type)
-  instantiatable_structs = [s 
+  instantiatable_structs = [s
                             for s in struct_env
                             if all(is_inhabited(name_env, p) for p in s.properties)]
   inhabited_structs = gen_inhabited_types(name_env, predicate=is_struct_type)
@@ -372,7 +372,7 @@ def gen_inst(name_env, var_names, func_name, func_env, struct_env):
     return CallInst(name, func_name, args)
   elif inst is VarInst:
     varty = gen_inhabited_type(name_env)
-    name = gen_name(name_env, varty) 
+    name = gen_name(name_env, varty)
     r = gen_inhabitant(name_env, varty)
     return VarInst(name, r)
   elif inst is AssignInst:
@@ -472,7 +472,7 @@ def gen_func(func_name, func_env, struct_env):
       name_env[name.ty].append(name)
       if isinstance(inst, VarInst):
         var_names.add(name)
-  
+
   inhabitants = sorted(gen_inhabitants(name_env, func_name.ty), key=lambda n: int(n.str[1:]))
   ret_offset = max(-len(inhabitants), weighted_pick(return_offset_weights))
   ret_value = inhabitants[ret_offset]
@@ -484,7 +484,7 @@ def gen_func(func_name, func_env, struct_env):
 def gen_program():
   struct_env = []
   for n in range(rand.randrange(0, struct_limit)):
-    properties = [gen_type(struct_env=struct_env) 
+    properties = [gen_type(struct_env=struct_env)
                   for n in range(weighted_pick(property_count_weights))]
     n = "s{}".format(n)
     ty = StructType(Name(n, None), tuple(properties))
@@ -493,7 +493,7 @@ def gen_program():
   func_names = ["f{}".format(n) for n in range(rand.randrange(1, func_limit))]
   func_params = {}
   for n in func_names:
-    params = [Name("v{}".format(n), gen_type(type_weights, struct_env=struct_env)) 
+    params = [Name("v{}".format(n), gen_type(type_weights, struct_env=struct_env))
               for n in range(weighted_pick(param_count_weights))]
     func_params[n] = params
 
@@ -599,7 +599,7 @@ def validate_program(program):
 
   entry_args = initial_values(func_map[entry_name].params)
   mark_used_structs(entry_args)
-  try: 
+  try:
     interp_call(entry_name, entry_args)
     if op_count > 10:
       new_funcs = [f for f in program.funcs if f.name in called_funcs]
@@ -614,14 +614,16 @@ def validate_program(program):
 
 
 def main(prefix):
-  program = None 
+  program = None
   while program is None:
     program = validate_program(gen_program())
-  with open(f"{prefix}.swift", "w") as f:
+  if not os.path.exists("output"):
+    os.mkdir("output")
+  with open(f"output/{prefix}.swift", "w") as f:
     gen_print_swift.print_program(f, "Gen", program, "swift")
-  with open(f"{prefix}.mvs", "w") as f:
+  with open(f"output/{prefix}.mvs", "w") as f:
     gen_print_swift.print_program(f, "Gen", program, "mvs")
-  with open(f"{prefix}.cpp", "w") as f:
+  with open(f"output/{prefix}.cpp", "w") as f:
     gen_print_cpp.print_program(f, program)
 
 
