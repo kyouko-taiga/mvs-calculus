@@ -82,15 +82,15 @@ public struct ArrayExpr: Expr {
 /// A structure literal.
 public struct StructExpr: Expr {
 
+  public var range: SourceRange
+
+  public var type: Type?
+
   /// The name of the struct being referred.
   public var name: String
 
   /// The arguments of the struct's properties.
   public var args: [Expr]
-
-  public var range: SourceRange
-
-  public var type: Type?
 
   public init(name: String, args: [Expr], range: SourceRange) {
     self.name = name
@@ -107,6 +107,10 @@ public struct StructExpr: Expr {
 /// A function literal.
 public struct FuncExpr: Expr {
 
+  public var range: SourceRange
+
+  public var type: Type?
+
   /// The parameters of the function.
   public var params: [ParamDecl]
 
@@ -115,10 +119,6 @@ public struct FuncExpr: Expr {
 
   /// The function's body.
   public var body: Expr
-
-  public var range: SourceRange
-
-  public var type: Type?
 
   /// The free variables captured by the function.
   private var captures: [String: Type]?
@@ -158,15 +158,15 @@ public struct FuncExpr: Expr {
 /// A function call.
 public struct CallExpr: Expr {
 
+  public var range: SourceRange
+
+  public var type: Type?
+
   /// The callee.
   public var callee: Expr
 
   /// The arguments of the call.
   public var args: [Expr]
-
-  public var range: SourceRange
-
-  public var type: Type?
 
   public init(callee: Expr, args: [Expr], range: SourceRange) {
     self.callee = callee
@@ -183,6 +183,10 @@ public struct CallExpr: Expr {
 /// An infix expression.
 public struct InfixExpr: Expr {
 
+  public var range: SourceRange
+
+  public var type: Type?
+
   /// The left operand.
   public var lhs: Expr
 
@@ -191,10 +195,6 @@ public struct InfixExpr: Expr {
 
   /// The operator.
   public var oper: OperExpr
-
-  public var range: SourceRange
-
-  public var type: Type?
 
   public init(lhs: Expr, rhs: Expr, oper: OperExpr, range: SourceRange) {
     self.lhs = lhs
@@ -251,12 +251,12 @@ public struct OperExpr: Expr {
 
   }
 
-  /// The kind of the operator.
-  public var kind: Kind
-
   public var range: SourceRange
 
   public var type: Type?
+
+  /// The kind of the operator.
+  public var kind: Kind
 
   public init(kind: Kind, range: SourceRange) {
     self.kind = kind
@@ -272,12 +272,12 @@ public struct OperExpr: Expr {
 /// An `inout` argument.
 public struct InoutExpr: Expr {
 
-  /// The path of the `inout`ed location.
-  public var path: Path
-
   public var range: SourceRange
 
   public var type: Type?
+
+  /// The path of the `inout`ed location.
+  public var path: Path
 
   public init(path: Path, range: SourceRange) {
     self.path = path
@@ -293,6 +293,10 @@ public struct InoutExpr: Expr {
 /// A value binding.
 public struct BindingExpr: Expr {
 
+  public var range: SourceRange
+
+  public var type: Type?
+
   /// The binding being declared.
   public var decl: BindingDecl
 
@@ -301,10 +305,6 @@ public struct BindingExpr: Expr {
 
   /// The body of the expression.
   public var body: Expr
-
-  public var range: SourceRange
-
-  public var type: Type?
 
   public init(decl: BindingDecl, initializer: Expr, body: Expr, range: SourceRange) {
     self.decl = decl
@@ -322,6 +322,10 @@ public struct BindingExpr: Expr {
 /// An assignment.
 public struct AssignExpr: Expr {
 
+  public var range: SourceRange
+
+  public var type: Type?
+
   /// The path to which the value is being assigned.
   public var lvalue: Path
 
@@ -330,10 +334,6 @@ public struct AssignExpr: Expr {
 
   /// The body of the expression.
   public var body: Expr
-
-  public var range: SourceRange
-
-  public var type: Type?
 
   public init(lvalue: Path, rvalue: Expr, body: Expr, range: SourceRange) {
     self.lvalue = lvalue
