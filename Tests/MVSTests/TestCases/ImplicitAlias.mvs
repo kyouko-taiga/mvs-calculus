@@ -1,0 +1,11 @@
+struct Point {
+  var x: Int
+  var y: Int
+} in
+
+let p0: Point = Point(1, 2) in
+var p1: Point = p0 in
+let p2: Point = p1 in
+let p3: Point = p0 in
+p1.x = 97 in
+p0.x + p1.x + p2.x + p3.x  // #!output 100

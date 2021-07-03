@@ -24,6 +24,9 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// Indicates whether the emitter should generate a print of the program's value.
   public let shouldEmitPrint: Bool
 
+  /// The maximum size allowed for stack-allocated arrays.
+  public let maxStackArraySize: Int
+
   /// The builder that is used to generate LLVM IR instructions.
   var builder: IRBuilder!
 
@@ -107,9 +110,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     if let type = module.type(named: "_AnyArray") {
       return type as! StructType
     }
-    return builder.createStruct(
-      name : "_AnyArray",
-      types: [IntType.int64, IntType.int64, PointerType(pointee: IntType.int64), voidPtr])
+    return builder.createStruct(name : "_AnyArray", types: [voidPtr])
   }
 
   /// LLVM's `memset` intrinsic (i.e., `llvm.memset.p0i8.i64`).
@@ -135,15 +136,22 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
   /// Creates a new emitter.
   ///
-  /// - Parameter target: The machine target for the generated IR.
+  /// - Parameters:
+  ///   - target: The machine target for the generated IR.
+  ///   - mode: The code generation mode (defaut: `.debug`).
+  ///   - shouldEmitPrint: A Boolean value that indicates whether the emitter should generate a
+  ///     print of the program’s value.
+  ///   - maxStackArraySize: The maximum size for stack-allocated arrays.
   public init(
-    target          : TargetMachine? = nil,
-    mode            : EmitterMode = .debug,
-    shouldEmitPrint : Bool = false
+    target            : TargetMachine? = nil,
+    mode              : EmitterMode = .debug,
+    shouldEmitPrint   : Bool = false,
+    maxStackArraySize : Int = 256
   ) throws {
     self.target = try target ?? TargetMachine()
     self.mode = mode
     self.shouldEmitPrint = shouldEmitPrint
+    self.maxStackArraySize = maxStackArraySize
   }
 
   /// Emit the LLVM IR of the given program.
@@ -157,10 +165,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
     metatypes = [:]
     module.targetTriple = target.triple
 
-    // Emit the type declarations.
+    // Emit all type declarations.
     for decl in program.types {
-      // Create the type.
       guard case .struct(_, let props) = decl.type else { continue }
+
+      // Create the type.
       let irType = builder.createStruct(
         name : decl.name,
         types: props.map({ lower($0.type) }))
@@ -190,28 +199,28 @@ public struct Emitter: ExprVisitor, PathVisitor {
       let body = main.appendBasicBlock(named: "bench_body")
       let head = main.appendBasicBlock(named: "bench_head")
       let exit = main.appendBasicBlock(named: "bench_exit")
-      builder.buildBr(head)
+      builder.buildBr(body)
 
-      // Emit the start of the benchmark.
+      // Emit the head of the benchmark.
       builder.positionAtEnd(of: head)
-      let condition = builder.buildICmp(
-        builder.buildLoad(benchCount, type: IntType.int64), i64(0), .signedGreaterThan)
+      emit(drop: benchValue, type: programType)
+      let tmp0 = builder.buildLoad(benchCount, type: IntType.int64)
+      let condition = builder.buildICmp(tmp0, i64(0), .signedGreaterThan)
       builder.buildCondBr(condition: condition, then: body, else: exit)
 
+      // Emit the body of the benchmark (i.e., the program under test).
       builder.positionAtEnd(of: body)
-      builder.buildStore(
-        builder.buildSub(builder.buildLoad(benchCount, type: IntType.int64), i64(1)),
-        to: benchCount)
-
-      // Emit the program's expression.
       if isMovable(program.entry) {
         emit(move: &program.entry, to: benchValue)
       } else {
         emit(copy: &program.entry, to: benchValue)
       }
+
+      let tmp1 = builder.buildLoad(benchCount, type: IntType.int64)
+      builder.buildStore(builder.buildSub(tmp1, i64(1)), to: benchCount)
       builder.buildBr(head)
 
-      // Emit the end of the benchmark.
+      // Emit the tail of the benchmark.
       builder.positionAtEnd(of: exit)
       let value = builder.buildBitCast(benchValue, type: FloatType.double.ptr)
       _ = builder.buildCall(
@@ -242,9 +251,15 @@ public struct Emitter: ExprVisitor, PathVisitor {
       throw error
     }
 
-    let pipeliner = PassPipeliner(module: module)
-    pipeliner.addStandardModulePipeline("opt", optimization: .default, size: .default)
-    pipeliner.execute()
+    switch mode {
+    case .release, .benchmark:
+      let pipeliner = PassPipeliner(module: module)
+      pipeliner.addStandardModulePipeline("opt", optimization: .default, size: .default)
+      pipeliner.execute()
+
+    case .debug:
+      break
+    }
 
     return module
   }
@@ -350,7 +365,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // Create the type's destructor.
-    var dropFn = builder.addFunction("_AnyClosure.te_drop", type: anyInitFuncType)
+    var dropFn = builder.addFunction("_AnyClosure.te_drop", type: anyDropFuncType)
     dropFn.linkage = .private
     dropFn.addAttribute(.alwaysinline , to: .function)
     do {
@@ -422,7 +437,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       builder.buildRetVoid()
 
       // Create the type's destructor.
-      dropFn = builder.addFunction("\(decl.name).te_drop", type: anyInitFuncType)
+      dropFn = builder.addFunction("\(decl.name).te_drop", type: anyDropFuncType)
       dropFn!.linkage = .private
       dropFn!.addAttribute(.alwaysinline , to: .function)
 
@@ -493,12 +508,13 @@ public struct Emitter: ExprVisitor, PathVisitor {
     do {
       builder.positionAtEnd(of: initFn.appendBasicBlock(named: "entry"))
       let receiver = builder.buildBitCast(initFn.parameters[0], type: anyArrayType.ptr)
-      _ = builder.buildCall(runtime.arrayInit, args: [receiver, baseMetatype, i64(0), i64(0)])
+      builder.buildStore(anyArrayType.null(), to: receiver)
+      // _ = builder.buildCall(runtime.arrayInit, args: [receiver, baseMetatype, i64(0), i64(0)])
       builder.buildRetVoid()
     }
 
     // Create the type's destructor.
-    var dropFn = builder.addFunction("\(prefix).te_drop", type: anyInitFuncType)
+    var dropFn = builder.addFunction("\(prefix).te_drop", type: anyDropFuncType)
     dropFn.linkage = .private
     dropFn.addAttribute(.alwaysinline , to: .function)
     do {
@@ -693,7 +709,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     // Get the source's environment.
     var srcEnv = builder.buildStructGEP(fn.parameters[0], type: anyClosureType, index: 1)
-    srcEnv = builder.buildLoad(srcEnv, type: PointerType.toVoid)
+    srcEnv = builder.buildLoad(srcEnv, type: voidPtr)
 
     if captures.allSatisfy({ (_, type) in type.isTrivial }) {
       // If all captured symbols are trivial, then memcpy is enough.
@@ -854,7 +870,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     let size = stride(of: irType)
-    let buf = builder.buildBitCast(val, type: PointerType.toVoid)
+    let buf = builder.buildBitCast(val, type: voidPtr)
     _ = builder.buildCall(
       memset, args: [buf, IntType.int8.constant(0), size, IntType.int1.constant(0)])
   }
@@ -862,6 +878,14 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// Drops the given value.
   func emit(drop val: IRValue, type: Type) {
     switch type {
+    case .struct(name: _, let props) where !type.isTrivial:
+      let irType = lower(type)
+      for (i, prop) in props.enumerated() where !prop.type.isTrivial {
+        assert(prop.type.isAddressOnly)
+        let field = builder.buildStructGEP(val, type: irType, index: i)
+        emit(drop: field, type: prop.type)
+      }
+
     case .array(let elemType):
       _ = builder.buildCall(runtime.arrayDrop, args: [val, metatype(of: elemType)])
 
@@ -869,7 +893,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       emit(dropClosure: val)
 
     default:
-      break
+      assert(type.isTrivial, "missing drop handler for non-trivial type")
     }
   }
 
@@ -903,16 +927,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       }
 
     case .array:
-      // _ = builder.buildCall(runtime.arrayCopy, args: [loc, val])
-      let dst = builder.buildBitCast(loc, type: voidPtr)
-      let src = builder.buildBitCast(val, type: voidPtr)
-      _ = builder.buildCall(
-        memcpy, args: [dst, src, stride(of: anyArrayType), IntType.int1.constant(0)])
-
-      var counterLoc = builder.buildStructGEP(loc, type: anyArrayType, index: 2)
-      counterLoc = builder.buildLoad(counterLoc, type: PointerType(pointee: IntType.int64))
-      let counter = builder.buildLoad(counterLoc, type: IntType.int64)
-      builder.buildStore(builder.buildAdd(counter, i64(1)), to: counterLoc)
+      _ = builder.buildCall(runtime.arrayCopy, args: [loc, val])
 
     case .func:
       let closure = builder.buildBitCast(val, type: anyClosureType.ptr)
@@ -1085,7 +1100,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
   public mutating func visit(_ expr: inout ArrayExpr) -> IRValue {
     guard case .array(let elemType) = expr.type else { unreachable() }
     let elemIRType = lower(elemType)
-    let elemIRTypePtr = elemIRType.ptr
 
     // Allocate the array.
     let alloca = addEntryAlloca(type: anyArrayType)
@@ -1093,14 +1107,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
       runtime.arrayInit,
       args: [alloca, metatype(of: elemType), i64(expr.elems.count), stride(of: elemIRType)])
 
-    // Get the base address of the array.
-    var loc = builder.buildStructGEP(alloca, type: anyArrayType, index: 3)
-    loc = builder.buildLoad(loc, type: voidPtr)
-    loc = builder.buildBitCast(loc, type: elemIRTypePtr)
-
     // Initialize each element.
+    let payload = buildPayload(of: alloca, elemType: elemIRType)
     for i in 0 ..< expr.elems.count {
-      let gep = builder.buildInBoundsGEP(loc, type: elemIRType, indices: [i64(i)])
+      let gep = builder.buildInBoundsGEP(payload, type: elemIRType, indices: [i64(i)])
       if isMovable(expr.elems[i]) {
         emit(move: &expr.elems[i], to: gep)
       } else {
@@ -1113,6 +1123,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   }
 
   public mutating func visit(_ expr: inout StructExpr) -> IRValue {
+    guard case .struct(_, let props) = expr.type else { unreachable() }
     let structType = lower(expr.type!)
     assert(structType is StructType)
 
@@ -1123,7 +1134,24 @@ public struct Emitter: ExprVisitor, PathVisitor {
     // Initialize each property.
     for i in 0 ..< expr.args.count {
       let field = builder.buildStructGEP(alloca, type: structType, index: i)
-      if isMovable(expr.args[i]) {
+
+      // Just like for binding initialization, if the property is constant and its the argument is
+      // expressed by a constant lvalue, we can create an alias and avoid copying.
+      if var path = expr.args[i] as? NamePath,
+         props[i].mutability == .let,
+         path.mutability! == .let,
+         path.type!.isAddressOnly,
+         !path.type!.isFuncType
+      {
+        // Emit the lvalue corresponding to the path.
+        let (loc, origin) = path.accept(pathVisitor: &self)
+        emit(move: loc, type: expr.args[i].type!, to: field)
+
+        // Drop the path origin if necessary.
+        if let (value, type) = origin {
+          emit(drop: value, type: type)
+        }
+      } else if isMovable(expr.args[i]) {
         emit(move: &expr.args[i], to: field)
       } else {
         emit(init: field, type: expr.args[i].type!)
@@ -1152,7 +1180,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     if captures.isEmpty {
       // No environment.
       envType = nil
-      env = PointerType.toVoid.null()
+      env = voidPtr.null()
     } else {
       // Create the environment type.
       envType = builder.createStruct(
@@ -1240,18 +1268,36 @@ public struct Emitter: ExprVisitor, PathVisitor {
       // Extract the function.
       let fnType = buildFunctionType(from: params, to: output)
       fun = builder.buildStructGEP(callee, type: anyClosureType, index: 0)
-      fun = builder.buildLoad(fun, type: PointerType.toVoid)
+      fun = builder.buildLoad(fun, type: voidPtr)
       fun = builder.buildBitCast(fun, type: fnType.ptr)
 
       // Extract the environment.
       env = builder.buildStructGEP(callee, type: anyClosureType, index: 1)
-      env = builder.buildLoad(env!, type: PointerType.toVoid)
+      env = builder.buildLoad(env!, type: voidPtr)
     }
 
     // Emit the arguments.
     var args: [IRValue] = []
+    var tmps: [(IRValue, Type)] = []
+
     for i in 0 ..< expr.args.count {
-      args.append(expr.args[i].accept(&self))
+      // Just like for binding initialization, if the argument is expressed by a constant lvalue,
+      // we can create an alias and avoid copying.
+      if var path = expr.args[i] as? NamePath,
+         path.mutability! == .let,
+         path.type!.isAddressOnly,
+         !path.type!.isInoutType,
+         !path.type!.isFuncType
+      {
+        // Emit the lvalue corresponding to the path.
+        let (loc, origin) = path.accept(pathVisitor: &self)
+        args.append(loc)
+        origin.map({ tmps.append($0) })
+      } else {
+        let tmp = expr.args[i].accept(&self)
+        args.append(tmp)
+        tmps.append((tmp, expr.args[i].type!))
+      }
     }
 
     if let e = env {
@@ -1265,6 +1311,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
       _ = builder.buildCall(fun, args: [result] + args)
     } else {
       result = builder.buildCall(fun, args: args)
+    }
+
+    for (value, type) in tmps {
+      emit(drop: value, type: type)
     }
 
     return result
@@ -1285,10 +1335,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
     let prefix = "_\(expr.kind.rawValue)\(expr.type!.mangled)"
     if let fn = module.function(named: prefix) {
       builder.buildStore(
-        builder.buildBitCast(fn, type: PointerType.toVoid),
+        builder.buildBitCast(fn, type: voidPtr),
         to: builder.buildStructGEP(closure, type: anyClosureType, index: 0))
       builder.buildStore(
-        PointerType.toVoid.null(),
+        voidPtr.null(),
         to: builder.buildStructGEP(closure, type: anyClosureType, index: 1))
       builder.buildStore(
         module.function(named: "\(prefix).copy")!,
@@ -1305,10 +1355,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
     fn.linkage = .private
 
     builder.buildStore(
-      builder.buildBitCast(fn, type: PointerType.toVoid),
+      builder.buildBitCast(fn, type: voidPtr),
       to: builder.buildStructGEP(closure, type: anyClosureType, index: 0))
     builder.buildStore(
-      PointerType.toVoid.null(),
+      voidPtr.null(),
       to: builder.buildStructGEP(closure, type: anyClosureType, index: 1))
     builder.buildStore(
       emit(copyFuncForClosure: prefix, captures: [], envType: nil),
@@ -1339,28 +1389,36 @@ public struct Emitter: ExprVisitor, PathVisitor {
   }
 
   public mutating func visit(_ expr: inout BindingExpr) -> IRValue {
+    func cont(_ value: IRValue, shouldDrop: Bool) -> IRValue {
+      // Update the bindings.
+      let oldBindings = bindings
+      bindings[expr.decl.name] = value
+
+      // Emit the body of the expression.
+      let body = expr.body.accept(&self)
+
+      // Drop the initializer expression if necessary.
+      if shouldDrop {
+        emit(drop: value, type: expr.initializer.type!)
+      }
+
+      // Restore the bindings.
+      bindings = oldBindings
+      return body
+    }
+
     // If the binding declares a function, attempts to define it globally.
-    if bindings[expr.decl.name] == nil,
-       var decl = expr.initializer as? FuncExpr
-    {
+    if var decl = expr.initializer as? FuncExpr, bindings[expr.decl.name] == nil {
       defer { expr.initializer = decl }
 
       // If the function has no captures, then it can be emitted as a global symbol.
       let captures = decl.collectCaptures(excluding: { bindings[$0] is Function })
       if captures.isEmpty {
-        // Update the bindings.
-        let oldBindings = bindings
-        bindings[expr.decl.name] = emitGlobalFunction(
+        let value = emitGlobalFunction(
           decl      : &decl,
           name      : "_g" + expr.decl.name,
           inlinable : !expr.decl.name.hasPrefix("noinline_"))
-
-        // Emit the body of the expression.
-        let body = expr.body.accept(&self)
-
-        // Restore the bindings.
-        bindings = oldBindings
-        return body
+        return cont(value, shouldDrop: false)
       }
     }
 
@@ -1369,7 +1427,77 @@ public struct Emitter: ExprVisitor, PathVisitor {
       return expr.initializer.accept(&self)
     }
 
+    // If the binding is constant and initialized by a constant lvalue, we can create an alias and
+    // avoid copying. An exception must be made for functions, as stateful closures may mutate when
+    // they are called.
+    if var path = expr.initializer as? Path,
+       expr.decl.mutability == .let,
+       path.mutability! == .let,
+       !path.type!.isFuncType
+    {
+      // Emit the lvalue corresponding to the path.
+      let (loc, origin) = path.accept(pathVisitor: &self)
+      let value = cont(loc, shouldDrop: false)
+
+      // Drop the path origin if necessary.
+      if let (value, type) = origin {
+        emit(drop: value, type: type)
+      }
+
+      return value
+    }
+
     let alloca: IRValue
+
+    // If the binding is initialized by an array literal, try to allocate it on the stack.
+    if var array = expr.initializer as? ArrayExpr {
+      // If the array is empty, then we can just zero-initialize its structure.
+      if array.elems.isEmpty {
+        alloca = addEntryAlloca(type: anyArrayType, name: expr.decl.name)
+        builder.buildStore(anyArrayType.null(), to: alloca)
+        return cont(alloca, shouldDrop: false)
+      }
+
+      // Check that the array never escapes and is small enough to be allocated on the stack.
+      guard case .array(let elemType) = expr.decl.type else { unreachable() }
+      let elemIRType = lower(elemType)
+      let elemSize   = target.dataLayout.allocationSize(of: elemIRType)
+      let arraySize  = Int(elemSize.valueInBits(radix: 8) / 8) * array.elems.count
+      var analyzer   = ArrayEscapeAnalzyer(name: expr.decl.name)
+
+      if arraySize <= maxStackArraySize && !expr.body.accept(&analyzer) {
+        alloca = addEntryAlloca(type: anyArrayType, name: expr.decl.name)
+        let payload = addEntryAlloca(
+          type: elemIRType, count: i64(array.elems.count), name: expr.decl.name + ".payload")
+
+        for i in 0 ..< array.elems.count {
+          let gep = builder.buildInBoundsGEP(payload, type: elemIRType, indices: [i64(i)])
+          if isMovable(array.elems[i]) {
+            emit(move: &array.elems[i], to: gep)
+          } else {
+            emit(init: gep, type: elemType)
+            emit(copy: &array.elems[i], to: gep)
+          }
+        }
+
+        builder.buildStore(
+          builder.buildBitCast(payload, type: voidPtr),
+          to: builder.buildStructGEP(alloca, type: anyArrayType, index: 0))
+        let result = cont(alloca, shouldDrop: false)
+
+        for i in 0 ..< array.elems.count {
+          let gep = builder.buildInBoundsGEP(payload, type: elemIRType, indices: [i64(i)])
+          if elemType.isAddressOnly {
+            emit(drop: gep, type: elemType)
+          } else {
+            emit(drop: builder.buildLoad(gep, type: elemIRType), type: elemType)
+          }
+        }
+
+        return result
+      }
+    }
+
     if isMovable(expr.initializer) {
       // Move the initializer's value.
       alloca = expr.initializer.accept(&self)
@@ -1382,36 +1510,32 @@ public struct Emitter: ExprVisitor, PathVisitor {
       emit(copy: &expr.initializer, to: alloca)
     }
 
-    // Update the bindings.
-    let oldBindings = bindings
-    bindings[expr.decl.name] = alloca
-
-    // Emit the body of the expression.
-    let body = expr.body.accept(&self)
-
-    // Deinitialize the binding's value.
-    emit(drop: alloca, type: expr.initializer.type!)
-
-    // Restore the bindings.
-    bindings = oldBindings
-    return body
+    return cont(alloca, shouldDrop: true)
   }
 
 
   public mutating func visit(_ expr: inout AssignExpr) -> IRValue {
+    // Nothing to do if we're assigning the variable to itself (e.g., `a = a in ...`).
+    if let rPath = expr.rvalue as? Path, expr.lvalue.denotesSameLocation(as: rPath) {
+      return expr.body.accept(&self)
+    }
+
     // Emit the location, applying copy-on-write if needed.
     let (loc, origin) = uniquify(path: &expr.lvalue)
-    // let (loc, origin) = expr.lvalue.accept(pathVisitor: &self)
-    assert(origin == nil, "left operand is prefixed by an rvalue")
+    assert(origin == nil, "left operand is not a lvalue")
+
+    // Emit the right operand *after* the left one.
+    let tmp = expr.rvalue.accept(&self)
 
     // Drop the current value held by the left operand.
     emit(drop: loc, type: expr.lvalue.type!)
 
     // Emit the assignment.
     if isMovable(expr.rvalue) {
-      emit(move: &expr.rvalue, to: loc)
+      emit(move: tmp, type: expr.rvalue.type!, to: loc)
     } else {
-      emit(copy: &expr.rvalue, to: loc)
+      emit(copy: tmp, type: expr.rvalue.type!, to: loc)
+      emit(drop: tmp, type: expr.rvalue.type!)
     }
 
     // Emit the body of the expression.
@@ -1469,8 +1593,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
   public mutating func visit(path: inout ElemPath) -> PathResult {
     guard case .array(let elemType) = path.base.type else { unreachable() }
-    let elemIRType = lower(elemType)
-    let elemIRTypePtr = elemIRType.ptr
 
     // Emit the base expression.
     let pathBase: IRValue
@@ -1482,15 +1604,14 @@ public struct Emitter: ExprVisitor, PathVisitor {
       origin = (value: pathBase, type: path.base.type!)
     }
 
-    // Emit the array's address.
-    var base = builder.buildStructGEP(pathBase, type: anyArrayType, index: 3)
-    base = builder.buildLoad(base, type: voidPtr)
-    base = builder.buildBitCast(base, type: elemIRTypePtr)
+    // Emit the array's payload address.
+    let elemIRType = lower(elemType)
+    let payload = buildPayload(of: pathBase, elemType: elemIRType)
 
     // Emit the address of the selected element.
     assert(path.index.type == .int)
     let idx = path.index.accept(&self)
-    let loc = builder.buildInBoundsGEP(base, type: elemIRType, indices: [idx])
+    let loc = builder.buildInBoundsGEP(payload, type: elemIRType, indices: [idx])
 
     return (loc: loc, origin: origin)
   }
@@ -1564,18 +1685,14 @@ public struct Emitter: ExprVisitor, PathVisitor {
     let elemType = path.type!
     _ = builder.buildCall(runtime.arrayUniq, args: [pathBaseLoc, metatype(of: elemType)])
 
+    // Emit the array's payload address.
     let elemIRType = lower(elemType)
-    let elemIRTypePtr = elemIRType.ptr
-
-    // Emit the array's address.
-    var base = builder.buildStructGEP(pathBaseLoc, type: anyArrayType, index: 3)
-    base = builder.buildLoad(base, type: voidPtr)
-    base = builder.buildBitCast(base, type: elemIRTypePtr)
+    let payload = buildPayload(of: pathBaseLoc, elemType: elemIRType)
 
     // Emit the address of the selected element.
     assert(path.index.type == .int)
     let idx = path.index.accept(&self)
-    let loc = builder.buildInBoundsGEP(base, type: elemIRType, indices: [idx])
+    let loc = builder.buildInBoundsGEP(payload, type: elemIRType, indices: [idx])
 
     return (loc: loc, origin: nil)
   }
@@ -1684,7 +1801,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     // The environment is passed as an arbitrary pointer, at the end of the parameter list.
     if withEnvironment {
-      irParamTypes.append(PointerType.toVoid)
+      irParamTypes.append(voidPtr)
     }
 
     // If the output has an address-only type, we pass it as first parameter.
@@ -1694,6 +1811,18 @@ public struct Emitter: ExprVisitor, PathVisitor {
     } else {
       return FunctionType(irParamTypes, lower(output))
     }
+  }
+
+  /// Builds the base address of an array's payload.
+  ///
+  /// - Parameters:
+  ///   - array: A type-erased array value.
+  ///   - elemType: The type of the array's elements.
+  private func buildPayload(of array: IRValue, elemType: IRType) -> IRValue {
+    var payload = builder.buildStructGEP(array, type: anyArrayType, index: 0)
+    payload = builder.buildLoad(payload, type: voidPtr)
+    payload = builder.buildBitCast(payload, type: elemType.ptr)
+    return payload
   }
 
   /// Builds a closure.
@@ -1717,7 +1846,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     builder.buildStore(
-      builder.buildBitCast(fn, type: PointerType.toVoid),
+      builder.buildBitCast(fn, type: voidPtr),
       to: gep(index: 0))
     builder.buildStore(
       env,

@@ -1,5 +1,6 @@
 import Foundation
 import ArgumentParser
+import LLVM
 
 import AST
 import CodeGen
@@ -11,8 +12,20 @@ struct MVS: ParsableCommand {
   @Argument(help: "The source program.", transform: URL.init(fileURLWithPath:))
   var inputFile: URL
 
+  @Option(name: .short, help: "The output file.", transform: URL.init(fileURLWithPath:))
+  var outputFile: URL?
+
   @Option(help: "Wrap the program inside a benchmark.")
   var benchmark: Int?
+
+  @Option(help: "Set the maximum size for stack-allocated arrays.")
+  var maxStackArraySize: Int = 256
+
+  @Flag(help: "Dump the LLVM representation of the program.")
+  var emitLLVM: Bool = false
+
+  @Flag(name: [.customShort("O")], help: "Compile with optimizations.")
+  var optimize: Bool = false
 
   @Flag(help: "Disable the printing of the program's value.")
   var noPrint: Bool = false
@@ -34,14 +47,28 @@ struct MVS: ParsableCommand {
     // Emit the program's IR.
     let mode: EmitterMode
     if let n = benchmark {
+      precondition(n > 0, "number of runs should be greater than 0")
       mode = .benchmark(count: n)
-    } else {
+    } else if optimize {
       mode = .release
+    } else {
+      mode = .debug
     }
 
-    var emitter = try Emitter(mode: mode, shouldEmitPrint: !noPrint)
+    let target = try TargetMachine()
+    var emitter = try Emitter(
+      target            : target,
+      mode              : mode,
+      shouldEmitPrint   : !noPrint,
+      maxStackArraySize : maxStackArraySize)
     let module = try emitter.emit(program: &program)
-    module.dump()
+
+    if emitLLVM {
+      module.dump()
+    } else {
+      let output = (outputFile ?? inputFile.appendingPathExtension("o")).path
+      try target.emitToFile(module: module, type: .object, path: output)
+    }
   }
 
 }
