@@ -19,15 +19,15 @@ public protocol Decl {
 /// A struct declaration.
 public struct StructDecl: Decl {
 
+  public var range: SourceRange
+
+  public var type: Type?
+
   /// The name of the struct.
   public var name: String
 
   /// The properties of the struct.
   public var props: [BindingDecl]
-
-  public var range: SourceRange
-
-  public var type: Type?
 
   public init(name: String, props: [BindingDecl], range: SourceRange) {
     self.name = name
@@ -44,6 +44,10 @@ public struct StructDecl: Decl {
 /// A binding declaration.
 public struct BindingDecl: Decl {
 
+  public var range: SourceRange
+
+  public var type: Type?
+
   /// The mutability of the binding.
   public var mutability: MutabilityQualifier
 
@@ -52,10 +56,6 @@ public struct BindingDecl: Decl {
 
   /// The type signature of the binding.
   public var sign: Sign
-
-  public var range: SourceRange
-
-  public var type: Type?
 
   public init(mutability: MutabilityQualifier, name: String, sign: Sign, range: SourceRange) {
     self.mutability = mutability
@@ -73,15 +73,15 @@ public struct BindingDecl: Decl {
 /// A function parameter declaration.
 public struct ParamDecl: Decl {
 
+  public var range: SourceRange
+
+  public var type: Type?
+
   /// The name of the parameter.
   public var name: String
 
   /// The type signature of the parameter.
   public var sign: Sign
-
-  public var range: SourceRange
-
-  public var type: Type?
 
   public init(name: String, sign: Sign, range: SourceRange) {
     self.name = name
