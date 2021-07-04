@@ -1,12 +1,36 @@
 import AST
+import Basic
 
 /// An AST visitor that determines whether an array binding escapes its scope.
-struct ArrayEscapeAnalzyer: ExprVisitor {
+struct ArrayEscapeAnalzyer: DeclVisitor, ExprVisitor {
 
+  typealias DeclResult = Bool
   typealias ExprResult = Bool
 
   /// The name of the array binding to analyze.
   let name: String
+
+  mutating func visit(_ decl: inout StructDecl) -> Bool {
+    // Struct declarations are never visited.
+    unreachable()
+  }
+
+  mutating func visit(_ decl: inout BindingDecl) -> Bool {
+    return false
+  }
+
+  mutating func visit(_ decl: inout FuncDecl) -> Bool {
+    return decl.literal.accept(&self)
+  }
+
+  mutating func visit(_ decl: inout ParamDecl) -> Bool {
+    // Parameter declarations are never visited.
+    unreachable()
+  }
+
+  mutating func visit(_ decl: inout ErrorDecl) -> Bool {
+    return false
+  }
 
   mutating func visit(_ expr: inout IntExpr) -> Bool {
     return false
@@ -81,6 +105,10 @@ struct ArrayEscapeAnalzyer: ExprVisitor {
     return expr.lvalue.accept(&self)
         || expr.rvalue.accept(&self)
         || expr.body.accept(&self)
+  }
+
+  mutating func visit(_ expr: inout BlockExpr) -> ExprResult {
+    fatalError()
   }
 
   mutating func visit(_ expr: inout ErrorExpr) -> Bool {

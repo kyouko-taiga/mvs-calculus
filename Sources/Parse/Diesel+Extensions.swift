@@ -63,4 +63,10 @@ extension Parser {
     return lhs.then(rhs, combine: { _, rhs in rhs })
   }
 
+  static func | <P>(lhs: Self, rhs: P) -> Diesel.EitherParser<Self, P>
+  where P : Diesel.Parser, Self.Element == P.Element, Self.Stream == P.Stream
+  {
+    return lhs.or(rhs)
+  }
+
 }

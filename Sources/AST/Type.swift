@@ -24,6 +24,9 @@ public indirect enum Type: Hashable {
   /// The type of an ill-typed AST node.
   case error
 
+  /// The unit type.
+  public static var unit: Type { .struct(name: "Unit", props: []) }
+
   /// Indicates whether this type is a function type.
   public var isFuncType: Bool {
     switch self {

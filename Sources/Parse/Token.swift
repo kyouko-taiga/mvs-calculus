@@ -30,6 +30,7 @@ public struct Token {
     case `struct`
     case `let`
     case `var`
+    case `func`
     case `if`
     case `else`
     case `in`
@@ -39,6 +40,7 @@ public struct Token {
     case comma
     case dot
     case colon
+    case semi
     case assign
     case amp
     case arrow

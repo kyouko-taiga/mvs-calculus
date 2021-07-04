@@ -1,10 +1,39 @@
-/// An AST visitor that gathers the variables that occur free in an expression.
-struct CaptureCollector: ExprVisitor {
+import Basic
 
+/// An AST visitor that gathers the variables that occur free in an expression.
+struct CaptureCollector: DeclVisitor, ExprVisitor {
+
+  typealias DeclResult = [String: Type]
   typealias ExprResult = [String: Type]
 
   /// The set of names that are bound.
   var boundNames: Set<String> = []
+
+  mutating func visit(_ decl: inout StructDecl) -> DeclResult {
+    // Struct declarations are never visited.
+    unreachable()
+  }
+
+  mutating func visit(_ decl: inout BindingDecl) -> DeclResult {
+    return [:]
+  }
+
+  mutating func visit(_ decl: inout FuncDecl) -> DeclResult {
+    let oldBoundNames = boundNames
+    defer { boundNames = oldBoundNames }
+
+    boundNames.insert(decl.name)
+    return decl.literal.accept(&self)
+  }
+
+  mutating func visit(_ decl: inout ParamDecl) -> DeclResult {
+    // Parameter declarations are never visited.
+    unreachable()
+  }
+
+  mutating func visit(_ decl: inout ErrorDecl) -> DeclResult {
+    return [:]
+  }
 
   mutating func visit(_ expr: inout IntExpr) -> ExprResult {
     return [:]
@@ -35,7 +64,11 @@ struct CaptureCollector: ExprVisitor {
     defer { boundNames = oldBoundNames }
 
     boundNames.formUnion(expr.params.map({ $0.name }))
-    return expr.body.accept(&self)
+    var names: ExprResult = [:]
+    for i in 0 ..< expr.body.count {
+      names.merge(expr.body[i].accept(&self), uniquingKeysWith: merge(lhs:rhs:))
+    }
+    return names
   }
 
   mutating func visit(_ expr: inout CallExpr) -> ExprResult {
@@ -72,6 +105,14 @@ struct CaptureCollector: ExprVisitor {
     return expr.lvalue.accept(&self)
       .merging(expr.rvalue.accept(&self), uniquingKeysWith: merge(lhs:rhs:))
       .merging(expr.body.accept(&self), uniquingKeysWith: merge(lhs:rhs:))
+  }
+
+  mutating func visit(_ expr: inout BlockExpr) -> ExprResult {
+    var names: ExprResult = [:]
+    for i in 0 ..< expr.stmts.count {
+      names.merge(expr.stmts[i].accept(&self), uniquingKeysWith: merge(lhs:rhs:))
+    }
+    return names
   }
 
   mutating func visit(_ expr: inout ErrorExpr) -> ExprResult {

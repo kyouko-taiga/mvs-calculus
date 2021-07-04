@@ -45,6 +45,7 @@ struct Lexer: IteratorProtocol {
       case "let"    : token.kind = .let
       case "var"    : token.kind = .var
       case "else"   : token.kind = .error
+      case "func"   : token.kind = .func
       case "inout"  : token.kind = .inout
       case "struct" : token.kind = .struct
       default       : token.kind = .name
@@ -78,6 +79,7 @@ struct Lexer: IteratorProtocol {
     case ",": token.kind = .comma
     case ".": token.kind = .dot
     case ":": token.kind = .colon
+    case ";": token.kind = .semi
     case "&": token.kind = .amp
     case "(": token.kind = .lParen
     case ")": token.kind = .rParen

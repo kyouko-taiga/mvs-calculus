@@ -4,7 +4,7 @@ import Basic
 public struct Diagnostic {
 
   /// The source range of the diagnostic.
-  public let range: SourceRange
+  public let range: SourceRange?
 
   /// The message of the diagnostic.
   public let message: String
@@ -12,7 +12,7 @@ public struct Diagnostic {
   /// The level of the diagnostic.
   public let level: Level
 
-  public init(range: SourceRange, message: String, level: Level = .error) {
+  public init(range: SourceRange?, message: String, level: Level = .error) {
     self.range = range
     self.message = message
     self.level = level

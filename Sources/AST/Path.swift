@@ -32,7 +32,7 @@ public struct NamePath: Path {
   /// The name of the binding being referred.
   public var name: String
 
-  public var range: SourceRange
+  public var range: SourceRange?
 
   public var type: Type?
 
@@ -40,7 +40,7 @@ public struct NamePath: Path {
 
   public var mutability: MutabilityQualifier?
 
-  public init(name: String, range: SourceRange) {
+  public init(name: String, range: SourceRange?) {
     self.name = name
     self.range = range
   }
@@ -71,7 +71,7 @@ public struct PropPath: Path {
   /// The name of the property being referred.
   public var name: String
 
-  public var range: SourceRange
+  public var range: SourceRange?
 
   public var type: Type?
 
@@ -83,7 +83,7 @@ public struct PropPath: Path {
     return (base as? Path)?.mutability ?? .let
   }
 
-  public init(base: Expr, name: String, range: SourceRange) {
+  public init(base: Expr, name: String, range: SourceRange?) {
     self.base = base
     self.name = name
     self.range = range
@@ -119,7 +119,7 @@ public struct ElemPath: Path {
   /// The bracketed index.
   public var index: Expr
 
-  public var range: SourceRange
+  public var range: SourceRange?
 
   public var type: Type?
 
@@ -131,7 +131,7 @@ public struct ElemPath: Path {
     return (base as? Path)?.mutability ?? .let
   }
 
-  public init(base: Expr, index: Expr, range: SourceRange) {
+  public init(base: Expr, index: Expr, range: SourceRange?) {
     self.base = base
     self.index = index
     self.range = range

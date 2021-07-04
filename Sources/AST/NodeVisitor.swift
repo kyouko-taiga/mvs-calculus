@@ -5,7 +5,9 @@ public protocol DeclVisitor {
 
   mutating func visit(_ decl: inout StructDecl) -> DeclResult
   mutating func visit(_ decl: inout BindingDecl) -> DeclResult
+  mutating func visit(_ decl: inout FuncDecl) -> DeclResult
   mutating func visit(_ decl: inout ParamDecl) -> DeclResult
+  mutating func visit(_ decl: inout ErrorDecl) -> DeclResult
 
 }
 
@@ -25,6 +27,7 @@ public protocol ExprVisitor {
   mutating func visit(_ expr: inout InoutExpr) -> ExprResult
   mutating func visit(_ expr: inout BindingExpr) -> ExprResult
   mutating func visit(_ expr: inout AssignExpr) -> ExprResult
+  mutating func visit(_ expr: inout BlockExpr) -> ExprResult
   mutating func visit(_ expr: inout ErrorExpr) -> ExprResult
 
   mutating func visit(_ expr: inout NamePath) -> ExprResult

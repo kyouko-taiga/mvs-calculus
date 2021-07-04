@@ -40,7 +40,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   var module: Module { builder.module }
 
   /// The local bindings.
-  var bindings: [String: IRValue] = [:]
+  var bindings: [String: (value: IRValue, type: Type)] = [:]
 
   /// The metatypes of user-defined structures.
   var metatypes: [String: Global] = [:]
@@ -134,6 +134,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
       parameters: [voidPtr, voidPtr, IntType.int64])!
   }
 
+  /// A value of the `Unit` built-in type.
+  var unit: IRValue {
+    return module.type(named: "Unit")!.null()
+  }
+
   /// Creates a new emitter.
   ///
   /// - Parameters:
@@ -160,10 +165,20 @@ public struct Emitter: ExprVisitor, PathVisitor {
   ///   - program: The program for which LLVM IR is generated.
   ///   - name: The name of the module (default: `main`).
   public mutating func emit(program: inout Program, name: String = "main") throws -> Module {
+    // Configure the emitter.
     builder   = IRBuilder(module: Module(name: name))
     bindings  = [:]
     metatypes = [:]
-    module.targetTriple = target.triple
+
+    // Create the "main" function.
+    let main  = builder.addFunction("main", type: FunctionType([], IntType.int32))
+    let entry = main.appendBasicBlock(named: "entry")
+
+    guard !program.stmts.isEmpty else {
+      builder.positionAtEnd(of: entry)
+      builder.buildRet(0)
+      return module
+    }
 
     // Emit all type declarations.
     for decl in program.types {
@@ -179,69 +194,28 @@ public struct Emitter: ExprVisitor, PathVisitor {
       metatypes[decl.name] = emit(metatypeFor: decl, irType: irType)
     }
 
-    // Emit the program.
-    let main  = builder.addFunction("main", type: FunctionType([], IntType.int32))
-    let entry = main.appendBasicBlock(named: "entry")
+    // Emit the program's statements.
     builder.positionAtEnd(of: entry)
+    for i in 0 ..< program.stmts.count {
+      // Emit the statement.
+      let value = visit(stmt: &program.stmts[i])
 
-    let programType = program.entry.type!
-    let programIRType = lower(programType)
-
-    if case .benchmark(let n) = mode {
-      // Allocate and initialize benchmark variables.
-      let benchStart = builder.buildAlloca(type: FloatType.double, name: "bench_start")
-      let benchCount = builder.buildAlloca(type: IntType.int64, name: "bench_count")
-      let benchValue = builder.buildAlloca(type: programIRType)
-      builder.buildStore(builder.buildCall(runtime.uptimeNanoseconds, args: []), to: benchStart)
-      builder.buildStore(i64(n), to: benchCount)
-
-      // Create basic block to handle the benchmark's control flow.
-      let body = main.appendBasicBlock(named: "bench_body")
-      let head = main.appendBasicBlock(named: "bench_head")
-      let exit = main.appendBasicBlock(named: "bench_exit")
-      builder.buildBr(body)
-
-      // Emit the head of the benchmark.
-      builder.positionAtEnd(of: head)
-      emit(drop: benchValue, type: programType)
-      let tmp0 = builder.buildLoad(benchCount, type: IntType.int64)
-      let condition = builder.buildICmp(tmp0, i64(0), .signedGreaterThan)
-      builder.buildCondBr(condition: condition, then: body, else: exit)
-
-      // Emit the body of the benchmark (i.e., the program under test).
-      builder.positionAtEnd(of: body)
-      if isMovable(program.entry) {
-        emit(move: &program.entry, to: benchValue)
-      } else {
-        emit(copy: &program.entry, to: benchValue)
+      // If the statement produced a value, terminate its lifetime.
+      if let value = value {
+        if shouldEmitPrint && (i == program.stmts.count - 1) {
+          emitPrint(value: value, type: program.stmts[i].type!)
+        }
+        emit(drop: value, type: program.stmts[i].type!)
       }
+    }
 
-      let tmp1 = builder.buildLoad(benchCount, type: IntType.int64)
-      builder.buildStore(builder.buildSub(tmp1, i64(1)), to: benchCount)
-      builder.buildBr(head)
-
-      // Emit the tail of the benchmark.
-      builder.positionAtEnd(of: exit)
-      let value = builder.buildBitCast(benchValue, type: FloatType.double.ptr)
-      _ = builder.buildCall(
-        runtime.printF64,
-        args: [builder.buildLoad(value, type: FloatType.double)])
-
-      // Report the total execution time.
-      let delta = builder.buildSub(
-        builder.buildCall(runtime.uptimeNanoseconds, args: []),
-        builder.buildLoad(benchStart, type: FloatType.double))
-      _ = builder.buildCall(runtime.printF64, args: [delta])
-    } else {
-      // Emit the program's expression.
-      let value = program.entry.accept(&self)
-      if shouldEmitPrint {
-        emitPrint(value: value, type: program.entry.type!)
-      }
-      emit(drop: value, type: program.entry.type!)
+    // Clear the local variables.
+    for binding in bindings.keys {
+      emit(drop: binding, type: .error)
     }
 
     builder.buildRet(IntType.int32.constant(0))
+    module.targetTriple = target.triple
 
     do {
       try module.verify()
@@ -270,44 +244,36 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
   /// The metatype of the built-in `Int` type.
   private var intMetatype: Global {
-    // Check if we already build this metatype.
-    if let global = module.global(named: "_Int.Type") {
-      return global
-    }
-
-    // Save the builder's current insertion block to restore at the end.
-    let oldInsertBlock = builder.insertBlock
-    defer { oldInsertBlock.map(builder.positionAtEnd(of:)) }
-
-    // Create the type's equality function.
-    var equalFn = builder.addFunction("_Int.te_equal", type: anyEqualityFuncType)
-    equalFn.linkage = .private
-    equalFn.addAttribute(.alwaysinline, to: .function)
-    equalFn.addAttribute(.argmemonly  , to: .function)
-    equalFn.addAttribute(.norecurse   , to: .function)
-
-    builder.positionAtEnd(of: equalFn.appendBasicBlock(named: "entry"))
-    var lhs = builder.buildBitCast(equalFn.parameters[0], type: IntType.int64.ptr)
-    lhs = builder.buildLoad(lhs, type: IntType.int64)
-    var rhs = builder.buildBitCast(equalFn.parameters[1], type: IntType.int64.ptr)
-    rhs = builder.buildLoad(rhs, type: IntType.int64)
-    builder.buildRet(zext(builder.buildICmp(lhs, rhs, .equal)))
-
-    return builder.addGlobal(
-      "_Int.Type", initializer: metatypeType.constant(
-        values: [
-          stride(of: IntType.int64),
-          anyInitFuncType.ptr.null(),
-          anyDropFuncType.ptr.null(),
-          anyCopyFuncType.ptr.null(),
-          equalFn,
-        ]))
+    return builtinNumericMetatype(numericType: .int)
   }
 
   /// The metatype of the built-in `Float` type.
   private var floatMetatype: Global {
+    return builtinNumericMetatype(numericType: .float)
+  }
+
+  /// Generates the metatype of the specified built-in numeric type.
+  ///
+  /// - Parameter: A built-in numeric type (`Type.int` or `Type.float`).
+  private func builtinNumericMetatype(numericType: Type) -> Global {
+    let irType: IRType
+    let prefix: String
+
+    switch numericType {
+    case .int:
+      irType = IntType.int64
+      prefix = "_Int"
+
+    case .float:
+      irType = FloatType.double
+      prefix = "_Float"
+
+    default:
+      preconditionFailure()
+    }
+
     // Check if we already build this metatype.
-    if let global = module.global(named: "_Float.Type") {
+    if let global = module.global(named: "\(prefix).Type") {
       return global
     }
 
@@ -316,23 +282,23 @@ public struct Emitter: ExprVisitor, PathVisitor {
     defer { oldInsertBlock.map(builder.positionAtEnd(of:)) }
 
     // Create the type's equality function.
-    var equalFn = builder.addFunction("_Float.te_equal", type: anyEqualityFuncType)
+    var equalFn = builder.addFunction("\(prefix).te_equal", type: anyEqualityFuncType)
     equalFn.linkage = .private
     equalFn.addAttribute(.alwaysinline, to: .function)
     equalFn.addAttribute(.argmemonly  , to: .function)
     equalFn.addAttribute(.norecurse   , to: .function)
 
     builder.positionAtEnd(of: equalFn.appendBasicBlock(named: "entry"))
-    var lhs = builder.buildBitCast(equalFn.parameters[0], type: FloatType.double.ptr)
-    lhs = builder.buildLoad(lhs, type: FloatType.double)
-    var rhs = builder.buildBitCast(equalFn.parameters[1], type: FloatType.double.ptr)
-    rhs = builder.buildLoad(rhs, type: FloatType.double)
+    var lhs = builder.buildBitCast(equalFn.parameters[0], type: irType.ptr)
+    lhs = builder.buildLoad(lhs, type: irType)
+    var rhs = builder.buildBitCast(equalFn.parameters[1], type: irType.ptr)
+    rhs = builder.buildLoad(rhs, type: irType)
     builder.buildRet(zext(builder.buildFCmp(lhs, rhs, .orderedEqual)))
 
     return builder.addGlobal(
-      "_Float.Type", initializer: metatypeType.constant(
+      "\(prefix).Type", initializer: metatypeType.constant(
         values: [
-          stride(of: IntType.int64),
+          stride(of: irType),
           anyInitFuncType.ptr.null(),
           anyDropFuncType.ptr.null(),
           anyCopyFuncType.ptr.null(),
@@ -808,11 +774,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
 
   private mutating func emitGlobalFunction(
-    decl: inout FuncExpr,
+    literal: inout FuncExpr,
     name: String,
     inlinable: Bool = true
   ) -> Function {
-    guard case .func(let params, let output) = decl.type else { unreachable() }
+    guard case .func(let params, let output) = literal.type else { unreachable() }
 
     // Create the function.
     let type = buildFunctionType(from: params, to: output, withEnvironment: false)
@@ -832,24 +798,44 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     // Configure the local bindings.
     builder.positionAtEnd(of: fn.appendBasicBlock(named: "entry"))
-    bindings = bindings.filter({ $0.value is Function })
+    bindings = bindings.filter({ (_, binding) in binding.value is Function })
     let offset = output.isAddressOnly ? 1 : 0
-    for (i, param) in decl.params.enumerated() {
+    for (i, param) in literal.params.enumerated() {
       if param.type!.isAddressOnly {
-        bindings[param.name] = fn.parameters[i + offset]
+        bindings[param.name] = (value: fn.parameters[i + offset], type: param.type!)
       } else {
         let alloca = addEntryAlloca(type: lower(param.type!))
         builder.buildStore(fn.parameters[i + offset], to: alloca)
-        bindings[param.name] = alloca
+        bindings[param.name] = (value: alloca, type: param.type!)
       }
     }
 
-    // Emit the function.
-    if output.isAddressOnly {
-      emit(move: &decl.body, to: fn.parameters[0])
+    // If the function doesn't have any statement, it must return `unit`.
+    guard !literal.body.isEmpty else {
+      assert(output == .unit)
       builder.buildRetVoid()
-    } else {
-      builder.buildRet(decl.body.accept(&self))
+      return fn
+    }
+
+    for i in 0 ..< literal.body.count {
+      // Emit the statement.
+      let value = visit(stmt: &literal.body[i])
+
+      // Terminate the lifetime of non-return values.
+      if i < literal.body.count - 1 {
+        value.map({ val in emit(drop: val, type: literal.body[i].type!) })
+        continue
+      }
+
+      // Handle return values.
+      if output == .unit {
+        builder.buildRetVoid()
+      } else if output.isAddressOnly {
+        emit(move: value!, type: literal.body[i].type!, to: fn.parameters[0])
+        builder.buildRetVoid()
+      } else {
+        builder.buildRet(value!)
+      }
     }
 
     return fn
@@ -1089,6 +1075,137 @@ public struct Emitter: ExprVisitor, PathVisitor {
   // MARK: Codegen
   // ----------------------------------------------------------------------------------------------
 
+  public mutating func visit(_ decl: inout BindingDecl) -> IRValue {
+    func cont(_ value: IRValue, shouldDrop: Bool) -> IRValue {
+      // Update the bindings.
+      let oldBindings = bindings
+      bindings[expr.decl.name] = (value: value, type: expr.type!)
+
+      // Emit the body of the expression.
+      let body = expr.body.accept(&self)
+
+      // Drop the initializer expression if necessary.
+      if shouldDrop {
+        emit(drop: value, type: expr.initializer.type!)
+      }
+
+      // Restore the bindings.
+      bindings = oldBindings
+      return body
+    }
+
+    // If the binding declares a function, attempts to define it globally.
+    if var literal = decl.initializer as? FuncExpr, bindings[decl.name] == nil {
+      defer { decl.initializer = literal }
+
+      // If the function has no captures, then it can be emitted as a global symbol.
+      let captures = literal.collectCaptures(excluding: { bindings[$0]?.value is Function })
+      if captures.isEmpty {
+        let value = emitGlobalFunction(
+          literal   : &literal,
+          name      : "_g" + decl.name,
+          inlinable : !decl.name.hasPrefix("noinline_"))
+        return cont(value, shouldDrop: false)
+      }
+    }
+
+    // Let-let binding optimization: if the binding is constant and initialized by a constant
+    // lvalue, we can create an alias and avoid copying.
+    if var path = decl.initializer as? Path,
+       decl.mutability == .let,
+       path.mutability! == .let
+    {
+      // Emit the lvalue corresponding to the path.
+      let (loc, origin) = path.accept(pathVisitor: &self)
+      let value = cont(loc, shouldDrop: false)
+
+      // Drop the path origin if necessary.
+      if let (value, type) = origin {
+        emit(drop: value, type: type)
+      }
+
+      return value
+    }
+
+    let alloca: IRValue
+
+    // If the binding is initialized by an array literal, try to allocate it on the stack.
+    if var array = decl.initializer as? ArrayExpr {
+      // If the array is empty, then we can just zero-initialize its structure.
+      if array.elems.isEmpty {
+        alloca = addEntryAlloca(type: anyArrayType, name: decl.name)
+        builder.buildStore(anyArrayType.null(), to: alloca)
+        return cont(alloca, shouldDrop: false)
+      }
+
+      // Check that the array never escapes and is small enough to be allocated on the stack.
+      guard case .array(let elemType) = decl.type else { unreachable() }
+      let elemIRType = lower(elemType)
+      let elemSize   = target.dataLayout.allocationSize(of: elemIRType)
+      let arraySize  = Int(elemSize.valueInBits(radix: 8) / 8) * array.elems.count
+      var analyzer   = ArrayEscapeAnalzyer(name: decl.name)
+
+      if arraySize <= maxStackArraySize && !expr.body.accept(&analyzer) {
+        alloca = addEntryAlloca(type: anyArrayType, name: expr.decl.name)
+        let payload = addEntryAlloca(
+          type: elemIRType, count: i64(array.elems.count), name: expr.decl.name + ".payload")
+
+        for i in 0 ..< array.elems.count {
+          let gep = builder.buildInBoundsGEP(payload, type: elemIRType, indices: [i64(i)])
+          if isMovable(array.elems[i]) {
+            emit(move: &array.elems[i], to: gep)
+          } else {
+            emit(init: gep, type: elemType)
+            emit(copy: &array.elems[i], to: gep)
+          }
+        }
+
+        builder.buildStore(
+          builder.buildBitCast(payload, type: voidPtr),
+          to: builder.buildStructGEP(alloca, type: anyArrayType, index: 0))
+        let result = cont(alloca, shouldDrop: false)
+
+        for i in 0 ..< array.elems.count {
+          let gep = builder.buildInBoundsGEP(payload, type: elemIRType, indices: [i64(i)])
+          if elemType.isAddressOnly {
+            emit(drop: gep, type: elemType)
+          } else {
+            emit(drop: builder.buildLoad(gep, type: elemIRType), type: elemType)
+          }
+        }
+
+        return result
+      }
+    }
+
+    if isMovable(expr.initializer) {
+      // Move the initializer's value.
+      alloca = expr.initializer.accept(&self)
+    } else {
+      // Allocate storage for the binding.
+      alloca = addEntryAlloca(type: lower(expr.decl.type!), name: expr.decl.name)
+      emit(init: alloca, type: expr.decl.type!)
+
+      // Emit the binding's value.
+      emit(copy: &expr.initializer, to: alloca)
+    }
+
+    return cont(alloca, shouldDrop: true)
+  }
+
+  public mutating func visit(_ decl: inout FuncDecl) {
+    let captures = decl.literal.collectCaptures(excluding: { bindings[$0]?.value is Function })
+    if captures.isEmpty {
+      let fn = emitGlobalFunction(
+        literal   : &decl.literal,
+        name      : "_g" + decl.name,
+        inlinable : !decl.name.hasPrefix("noinline_"))
+      bindings[decl.name] = (value: fn, type: decl.literal.type!)
+    } else {
+      fatalError("not implemented")
+    }
+  }
+
   public mutating func visit(_ expr: inout IntExpr) -> IRValue {
     return i64(expr.value)
   }
@@ -1170,7 +1287,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
     nextClosureID += 1
 
     // Gathers the free variables of the function.
-    let captures = expr.collectCaptures(excluding: { bindings[$0] is Function })
+    let captures = expr
+      .collectCaptures(excluding: { bindings[$0]?.value is Function })
       .sorted(by: { a, b in a.key < b.key })
 
     // Create the function's environment.
@@ -1195,8 +1313,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
         let loc = builder.buildStructGEP(buf, type: envType!, index: i)
 
         let val = capture.value.isAddressOnly
-          ? bindings[capture.key]!
-          : builder.buildLoad(bindings[capture.key]!, type: lower(capture.value))
+          ? bindings[capture.key]!.value
+          : builder.buildLoad(bindings[capture.key]!.value, type: lower(capture.value))
         emit(copy: val, type: capture.value, to: loc)
       }
     }
@@ -1219,31 +1337,53 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     // Configure the local bindings.
     builder.positionAtEnd(of: fn.appendBasicBlock(named: "entry"))
-    bindings = bindings.filter({ $0.value is Function })
+    bindings = bindings.filter({ (_, binding) in binding.value is Function })
     let offset = output.isAddressOnly ? 1 : 0
     for (i, param) in expr.params.enumerated() {
       if param.type!.isAddressOnly {
-        bindings[param.name] = fn.parameters[i + offset]
+        bindings[param.name] = (value: fn.parameters[i + offset], type: param.type!)
       } else {
         let alloca = addEntryAlloca(type: lower(param.type!))
         builder.buildStore(fn.parameters[i + offset], to: alloca)
-        bindings[param.name] = alloca
+        bindings[param.name] = (value: alloca, type: param.type!)
       }
     }
 
     if let eType = envType {
       let e = builder.buildBitCast(fn.parameters.last!, type: eType.ptr)
       for (i, capture) in captures.enumerated() {
-        bindings[capture.key] = builder.buildStructGEP(e, type: eType, index: i)
+        bindings[capture.key] = (
+          value: builder.buildStructGEP(e, type: eType, index: i),
+          type: capture.value)
       }
     }
 
-    // Emit the function.
-    if output.isAddressOnly {
-      emit(move: &expr.body, to: fn.parameters[0])
+    // If the function doesn't have any statement, it must return `unit`.
+    guard !expr.body.isEmpty else {
+      assert(output == .unit)
       builder.buildRetVoid()
-    } else {
-      builder.buildRet(expr.body.accept(&self))
+      return fn
+    }
+
+    for i in 0 ..< expr.body.count {
+      // Emit the statement.
+      let value = visit(stmt: &expr.body[i])
+
+      // Terminate the lifetime of non-return values.
+      if i < expr.body.count - 1 {
+        value.map({ val in emit(drop: val, type: expr.body[i].type!) })
+        continue
+      }
+
+      // Handle return values.
+      if output == .unit {
+        builder.buildRetVoid()
+      } else if output.isAddressOnly {
+        emit(move: value!, type: expr.body[i].type!, to: fn.parameters[0])
+        builder.buildRetVoid()
+      } else {
+        builder.buildRet(value!)
+      }
     }
 
     return closure
@@ -1257,7 +1397,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     // Extract the function.
     if let path = expr.callee as? NamePath,
-       let f = bindings[path.name] as? Function
+       let f = bindings[path.name]?.value as? Function
     {
       // The function can be dispatched statically.
       fun = f
@@ -1392,7 +1532,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     func cont(_ value: IRValue, shouldDrop: Bool) -> IRValue {
       // Update the bindings.
       let oldBindings = bindings
-      bindings[expr.decl.name] = value
+      bindings[expr.decl.name] = (value: value, type: expr.type!)
 
       // Emit the body of the expression.
       let body = expr.body.accept(&self)
@@ -1408,14 +1548,14 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // If the binding declares a function, attempts to define it globally.
-    if var decl = expr.initializer as? FuncExpr, bindings[expr.decl.name] == nil {
-      defer { expr.initializer = decl }
+    if var literal = expr.initializer as? FuncExpr, bindings[expr.decl.name] == nil {
+      defer { expr.initializer = literal }
 
       // If the function has no captures, then it can be emitted as a global symbol.
-      let captures = decl.collectCaptures(excluding: { bindings[$0] is Function })
+      let captures = literal.collectCaptures(excluding: { bindings[$0]?.value is Function })
       if captures.isEmpty {
         let value = emitGlobalFunction(
-          decl      : &decl,
+          literal   : &literal,
           name      : "_g" + expr.decl.name,
           inlinable : !expr.decl.name.hasPrefix("noinline_"))
         return cont(value, shouldDrop: false)
@@ -1513,7 +1653,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return cont(alloca, shouldDrop: true)
   }
 
-
   public mutating func visit(_ expr: inout AssignExpr) -> IRValue {
     // Nothing to do if we're assigning the variable to itself (e.g., `a = a in ...`).
     if let rPath = expr.rvalue as? Path, expr.lvalue.denotesSameLocation(as: rPath) {
@@ -1542,12 +1681,35 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return expr.body.accept(&self)
   }
 
+  public mutating func visit(_ expr: inout BlockExpr) -> ExprResult {
+    // Emit all statements in scope.
+    var last: (value: IRValue, type: Type)?
+    for i in 0 ..< expr.stmts.count {
+      last = expr.stmts[i].modify(
+        asDecl: { (decl: inout Decl) -> (value: IRValue, type: Type)? in
+          switch decl {
+          case var decl as FuncDecl:
+            visit(&decl)
+            return nil
+
+          default:
+            unreachable()
+          }
+        },
+        asExpr: { (expr: inout Expr) -> (value: IRValue, type: Type)? in
+          return (value: expr.accept(&self), type: expr.type!)
+        })
+    }
+
+    return last?.value ?? unit
+  }
+
   public mutating func visit(_ expr: inout ErrorExpr) -> IRValue {
     fatalError()
   }
 
   public mutating func visit(_ expr: inout NamePath) -> IRValue {
-    let loc = bindings[expr.name]!
+    let loc = bindings[expr.name]!.value
 
     if let fn = loc as? Function {
       return buildClosure(
@@ -1565,7 +1727,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   }
 
   public mutating func visit(path: inout NamePath) -> PathResult {
-    return (loc: bindings[path.name]!, origin: nil)
+    return (loc: bindings[path.name]!.value, origin: nil)
   }
 
   public mutating func visit(_ expr: inout ElemPath) -> IRValue {
@@ -1658,6 +1820,27 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return (loc: loc, origin: origin)
   }
 
+  public mutating func visit(stmt: inout Stmt) -> IRValue? {
+    return stmt.modify(
+      asDecl: { (decl: inout Decl) -> IRValue? in
+        switch decl {
+        case var decl as FuncDecl:
+          visit(&decl)
+          return nil
+
+        default:
+          unreachable()
+        }
+      },
+      asExpr: { (expr: inout Expr) -> IRValue? in
+        return expr.accept(&self)
+      })
+  }
+
+  // ----------------------------------------------------------------------------------------------
+  // MARK: Helpers
+  // ----------------------------------------------------------------------------------------------
+
   /// Emits a writeable location, uniquifying the base of the path if necessary.
   ///
   /// This method is intended to be a drop-in replacement of `visit(path:)` in situations where the
@@ -1709,10 +1892,6 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     return (loc: loc, origin: nil)
   }
-
-  // ----------------------------------------------------------------------------------------------
-  // MARK: Helpers
-  // ----------------------------------------------------------------------------------------------
 
   private func zext(_ value: IRValue) -> IRValue {
     return builder.buildZExt(value, type: IntType.int64)
@@ -1804,11 +1983,15 @@ public struct Emitter: ExprVisitor, PathVisitor {
       irParamTypes.append(voidPtr)
     }
 
-    // If the output has an address-only type, we pass it as first parameter.
-    if output.isAddressOnly {
+    if output == .unit {
+      // Unit functions have no return value.
+      return FunctionType(irParamTypes, VoidType())
+    } else if output.isAddressOnly {
+      // Return value with an address-only type are passed as an sret parameter.
       irParamTypes.insert(lower(output).ptr, at: 0)
       return FunctionType(irParamTypes, VoidType())
     } else {
+      // Other return values are passed directly.
       return FunctionType(irParamTypes, lower(output))
     }
   }

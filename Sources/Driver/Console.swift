@@ -9,8 +9,14 @@ struct Console: DiagnosticConsumer {
   let source: String
 
   func consume(_ diagnostic: Diagnostic) {
-    let start = diagnostic.range.lowerBound < source.endIndex
-      ? diagnostic.range.lowerBound
+    guard let range = diagnostic.range else {
+      // Print the diagnostic without any source location.
+      error("\(diagnostic.level): \(diagnostic.message)\n")
+      return
+    }
+
+    let start = range.lowerBound < source.endIndex
+      ? range.lowerBound
       : source.lastIndex(where: { _ in true })
 
     // Print the location at which the diagnostic occured.
@@ -29,8 +35,7 @@ struct Console: DiagnosticConsumer {
       error("\n")
 
       let padding = source.distance(from: excerpt.startIndex, to: location)
-      let count = source.distance(
-        from: location, to: min(diagnostic.range.upperBound, excerpt.endIndex))
+      let count = source.distance(from: location, to: min(range.upperBound, excerpt.endIndex))
 
       error(String(repeating: " ", count: padding))
       if count > 1 {
