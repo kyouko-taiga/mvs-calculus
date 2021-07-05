@@ -276,7 +276,8 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // Type check the both operands.
     expectedType = nil
-    let isWellTyped = expr.lhs.accept(&self) && expr.rhs.accept(&self)
+    var isWellTyped = expr.lhs.accept(&self)
+    isWellTyped = expr.rhs.accept(&self) && isWellTyped
 
     // Infer the type of the operator.
     guard expr.lhs.type == expr.rhs.type else {
@@ -360,8 +361,12 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     expectedType = expr.decl.type
     var isWellTyped = expr.initializer.accept(&self)
 
+    if expr.decl.type == nil {
+      expr.decl.type = expr.initializer.type!
+    }
+
     // Update the typing context.
-    gamma[expr.decl.name] = (expr.decl.mutability, expr.decl.type ?? expr.initializer.type!)
+    gamma[expr.decl.name] = (expr.decl.mutability, expr.decl.type!)
 
     // Type check the body of the expression.
     expectedType = expectedExprType
@@ -433,7 +438,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // Type check the body of the expression.
     expectedType = expected
-    isWellTyped = isWellTyped && expr.body.accept(&self)
+    isWellTyped = expr.body.accept(&self) && isWellTyped
     expr.type = expr.body.type
 
     // Make sure the type we inferred is the same type as what was expected.
