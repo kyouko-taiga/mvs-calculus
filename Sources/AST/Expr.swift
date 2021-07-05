@@ -24,7 +24,7 @@ public struct IntExpr: Expr {
 
   public var range: SourceRange
 
-  public var type: Type?
+  public let type: Type? = .int
 
   public init(value: Int, range: SourceRange) {
     self.value = value
@@ -45,7 +45,7 @@ public struct FloatExpr: Expr {
 
   public var range: SourceRange
 
-  public var type: Type?
+  public let type: Type? = .float
 
   public init(value: Double, range: SourceRange) {
     self.value = value
