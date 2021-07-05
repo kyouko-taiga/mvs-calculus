@@ -446,6 +446,33 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     return isWellTyped
   }
 
+  public mutating func visit(_ expr: inout CondExpr) -> Bool {
+    defer { expectedType = nil }
+
+    // Save the expected type, if any.
+    let expectedExprType = expectedType
+
+    // Type check the condition.
+    expectedType = .int
+    var isWellTyped = expr.cond.accept(&self)
+
+    // Type check both branches.
+    expectedType = expectedExprType
+    isWellTyped = expr.succ.accept(&self) && isWellTyped
+    expectedType = expectedExprType ?? expr.succ.type
+    isWellTyped = expr.fail.accept(&self) && isWellTyped
+
+    // Make sure the type we inferred is the same type as what was expected.
+    expr.type = expr.succ.type
+    guard (expectedExprType == nil) || (expectedExprType == expr.type) else {
+      diagConsumer.consume(
+        .typeError(expected: expectedExprType!, actual: expr.type!, range: expr.range))
+      return false
+    }
+
+    return isWellTyped
+  }
+
   public mutating func visit(_ expr: inout ErrorExpr) -> Bool {
     return false
   }

@@ -377,6 +377,35 @@ public struct AssignExpr: Expr {
 
 }
 
+/// A conditional expression.
+public struct CondExpr: Expr {
+
+  public var range: SourceRange
+
+  public var type: Type?
+
+  /// The condition of the expression.
+  public var cond: Expr
+
+  /// The sub-expression to execute if the condition holds.
+  public var succ: Expr
+
+  /// The sub-expression to execute if the condition does not hold.
+  public var fail: Expr
+
+  public init(cond: Expr, succ: Expr, fail: Expr, range: SourceRange) {
+    self.cond = cond
+    self.succ = succ
+    self.fail = fail
+    self.range = range
+  }
+
+  public mutating func accept<V>(_ visitor: inout V) -> V.ExprResult where V: ExprVisitor {
+    visitor.visit(&self)
+  }
+
+}
+
 /// An ill-formed expression that results from a failed attempt to type check the program.
 public struct ErrorExpr: Expr {
 

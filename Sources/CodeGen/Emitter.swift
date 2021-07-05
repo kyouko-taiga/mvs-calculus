@@ -1595,6 +1595,47 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return expr.body.accept(&self)
   }
 
+  public mutating func visit(_ expr: inout CondExpr) -> IRValue {
+    // Emit the condition.
+    let cond = builder.buildTrunc(expr.cond.accept(&self), type: IntType.int1)
+
+    // Create a temporary location to store the result of the conditional.
+    let tmp = addEntryAlloca(type: lower(expr.type!))
+
+    // Emit both branches of the conditional.
+    let fun = builder.currentFunction!
+    let succBlock = fun.appendBasicBlock(named: "succ")
+    let failBlock = fun.appendBasicBlock(named: "fail")
+    let tailBlock = fun.appendBasicBlock(named: "tail")
+    builder.buildCondBr(condition: cond, then: succBlock, else: failBlock)
+
+    builder.positionAtEnd(of: succBlock)
+    if isMovable(expr.succ) {
+      emit(move: &expr.succ, to: tmp)
+    } else {
+      emit(init: tmp, type: expr.succ.type!)
+      emit(copy: &expr.succ, to: tmp)
+    }
+    builder.buildBr(tailBlock)
+
+    builder.positionAtEnd(of: failBlock)
+    if isMovable(expr.fail) {
+      emit(move: &expr.fail, to: tmp)
+    } else {
+      emit(init: tmp, type: expr.fail.type!)
+      emit(copy: &expr.fail, to: tmp)
+    }
+    builder.buildBr(tailBlock)
+
+    // Extract the computed value from the temporary.
+    builder.positionAtEnd(of: tailBlock)
+    if expr.type!.isAddressOnly {
+      return tmp
+    } else {
+      return builder.buildLoad(tmp, type: lower(expr.type!))
+    }
+  }
+
   public mutating func visit(_ expr: inout ErrorExpr) -> IRValue {
     fatalError()
   }
