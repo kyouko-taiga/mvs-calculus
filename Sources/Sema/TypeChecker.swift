@@ -541,11 +541,14 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   // T-BindingRef.
   public mutating func visit(path: inout NamePath) -> PathResult {
     if let pair = gamma[path.name] {
-      path.type       = pair.type
+      path.type = pair.type
       path.mutability = pair.mutability
+    } else if path.name == "uptime" {
+      path.type = .func(params: [], output: .float)
+      path.mutability = .let
     } else {
       diagConsumer.consume(.undefinedBinding(name: path.name, range: path.range))
-      path.type       = .error
+      path.type = .error
       path.mutability = .let
     }
 

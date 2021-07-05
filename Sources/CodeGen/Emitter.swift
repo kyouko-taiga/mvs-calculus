@@ -179,6 +179,13 @@ public struct Emitter: ExprVisitor, PathVisitor {
       metatypes[decl.name] = emit(metatypeFor: decl, irType: irType)
     }
 
+    // Expose built-in functions.
+    var uptime = builder.addFunction("_uptime", type: buildFunctionType(from: [], to: .float))
+    uptime.linkage = .private
+    builder.positionAtEnd(of: uptime.appendBasicBlock(named: "entry"))
+    builder.buildRet(builder.buildCall(runtime.uptimeNanoseconds, args: []))
+    bindings["uptime"] = uptime
+
     // Emit the program.
     let main  = builder.addFunction("main", type: FunctionType([], IntType.int32))
     let entry = main.appendBasicBlock(named: "entry")
@@ -1868,13 +1875,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// - Parameters:
   ///   - params: An array with the MVS semantic type of each formal parameter.
   ///   - output: The MVS semantic type of the return value.
-  ///   - withEnvironment: A flag indicating whether the list of formal parameters must include a
-  ///     pointer to a function's environment.
-  private func buildFunctionType(
-    from params: [Type],
-    to output: Type,
-    withEnvironment: Bool = true
-  ) -> FunctionType {
+  private func buildFunctionType(from params: [Type], to output: Type) -> FunctionType {
     var irParamTypes: [IRType] = []
     irParamTypes.reserveCapacity(params.count + 1)
 
@@ -1893,9 +1894,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // The environment is passed as an arbitrary pointer, at the end of the parameter list.
-    if withEnvironment {
-      irParamTypes.append(voidPtr)
-    }
+    irParamTypes.append(voidPtr)
 
     // If the output has an address-only type, we pass it as first parameter.
     if output.isAddressOnly {
