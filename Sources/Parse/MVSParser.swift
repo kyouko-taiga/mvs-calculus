@@ -77,9 +77,9 @@ public struct MVSParser {
   /// `'struct' name`
   lazy var structDeclHead = declHead(introducer: .struct)
 
-  /// `'{' bindingDecl* '}'`
+  /// `'{' ( bindingDecl ';'* )* '}'`
   lazy var structDeclBody = take(.lBrace)
-    .then(bindingDecl.many, combine: { _, rhs in rhs })
+    .then((bindingDecl >> take(.semi).many).many, combine: { _, rhs in rhs })
     .catch({ (error, state) in
       state.report(error)
       return .success([], state.dropping(while: { $0.kind != .rBrace }))
