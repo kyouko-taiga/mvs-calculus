@@ -66,8 +66,8 @@ struct MVS: ParsableCommand {
     if emitLLVM {
       module.dump()
     } else {
-      let output = (outputFile ?? inputFile.appendingPathExtension("o")).path
-      try target.emitToFile(module: module, type: .object, path: output)
+      let output = outputFile ?? inputFile.deletingPathExtension().appendingPathExtension("o")
+      try target.emitToFile(module: module, type: .object, path: output.path)
     }
   }
 
