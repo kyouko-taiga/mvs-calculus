@@ -88,11 +88,16 @@ extension Diagnostic {
   }
 
   static func undefinedOperator(
-    kind: OperExpr.Kind, operands: (lhs: Type, rhs: Type), range: SourceRange
+    kind: OperExpr.Kind, lhs: Type, rhs: Type, range: SourceRange
   ) -> Diagnostic {
     return Diagnostic(
       range: range,
-      message: "undefined operator '\(kind)' for operands of type '\(operands)'")
+      message: "undefined operator '\(kind)' for operands of type '\(lhs)' and \(rhs)")
+  }
+
+  static func undefinedOperator(expr: InfixExpr) -> Diagnostic {
+    return undefinedOperator(
+      kind: expr.oper.kind, lhs: expr.lhs.type!, rhs: expr.rhs.type!, range: expr.oper.range)
   }
 
   static func undefinedType(name: String, range: SourceRange) -> Diagnostic {
