@@ -109,7 +109,7 @@ public struct ErrorSign: Sign {
 
   public var range: SourceRange
 
-  public var type: Type?
+  public let type: Type? = .error
 
   public init(range: SourceRange) {
     self.range = range
