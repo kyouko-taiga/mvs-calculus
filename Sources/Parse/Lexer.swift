@@ -79,6 +79,7 @@ struct Lexer: IteratorProtocol {
     case ",": token.kind = .comma
     case ".": token.kind = .dot
     case ":": token.kind = .colon
+    case ";": token.kind = .semi
     case "?": token.kind = .query
     case "&": token.kind = .amp
     case "(": token.kind = .lParen

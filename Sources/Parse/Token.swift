@@ -39,6 +39,7 @@ public struct Token {
     case comma
     case dot
     case colon
+    case semi
     case query
     case bang
     case under
