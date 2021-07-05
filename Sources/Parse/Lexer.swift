@@ -40,6 +40,7 @@ struct Lexer: IteratorProtocol {
       token.range = token.range.lowerBound ..< index
 
       switch word {
+      case "_"      : token.kind = .under
       case "if"     : token.kind = .if
       case "in"     : token.kind = .in
       case "let"    : token.kind = .let

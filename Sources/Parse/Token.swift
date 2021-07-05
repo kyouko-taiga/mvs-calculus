@@ -41,6 +41,7 @@ public struct Token {
     case colon
     case query
     case bang
+    case under
     case assign
     case amp
     case arrow

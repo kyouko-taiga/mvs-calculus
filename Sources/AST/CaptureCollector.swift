@@ -4,7 +4,7 @@ struct CaptureCollector: ExprVisitor {
   typealias ExprResult = [String: Type]
 
   /// The set of names that are bound.
-  var boundNames: Set<String> = []
+  private var boundNames: Set<String> = ["_"]
 
   mutating func visit(_ expr: inout IntExpr) -> ExprResult {
     return [:]

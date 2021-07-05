@@ -270,7 +270,7 @@ public struct MVSParser {
     .or(operExpr)
     .or((take(.lParen) << expr) >> take(.rParen))
 
-  let namePath = take(.name)
+  let namePath = take(.name).or(take(.under))
     .assemble({ (state, name) -> Expr in
       NamePath(
         name: String(name.value(in: state.source)),

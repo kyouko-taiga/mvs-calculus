@@ -1580,22 +1580,27 @@ public struct Emitter: ExprVisitor, PathVisitor {
       return expr.body.accept(&self)
     }
 
-    // Emit the location, applying copy-on-write if needed.
-    let (loc, origin) = uniquify(path: &expr.lvalue)
-    assert(origin == nil, "left operand is not a lvalue")
-
-    // Emit the right operand *after* the left one.
-    let tmp = expr.rvalue.accept(&self)
-
-    // Drop the current value held by the left operand.
-    emit(drop: loc, type: expr.lvalue.type!)
-
-    // Emit the assignment.
-    if isMovable(expr.rvalue) {
-      emit(move: tmp, type: expr.rvalue.type!, to: loc)
+    if let path = expr.lvalue as? NamePath, path.name == "_" {
+      // Don't emit an assignment if the lvalue is `_`.
+      emit(drop: expr.rvalue.accept(&self), type: expr.rvalue.type!)
     } else {
-      emit(copy: tmp, type: expr.rvalue.type!, to: loc)
-      emit(drop: tmp, type: expr.rvalue.type!)
+      // Emit the location, applying copy-on-write if needed.
+      let (loc, origin) = uniquify(path: &expr.lvalue)
+      assert(origin == nil, "left operand is not a lvalue")
+
+      // Emit the right operand *after* the left one.
+      let tmp = expr.rvalue.accept(&self)
+
+      // Drop the current value held by the left operand.
+      emit(drop: loc, type: expr.lvalue.type!)
+
+      // Emit the assignment.
+      if isMovable(expr.rvalue) {
+        emit(move: tmp, type: expr.rvalue.type!, to: loc)
+      } else {
+        emit(copy: tmp, type: expr.rvalue.type!, to: loc)
+        emit(drop: tmp, type: expr.rvalue.type!)
+      }
     }
 
     // Emit the body of the expression.

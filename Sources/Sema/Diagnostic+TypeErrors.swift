@@ -69,6 +69,12 @@ extension Diagnostic {
       message: "invalid number of arguments: expected '\(expected)', for '\(actual)'")
   }
 
+  static func invalidUseOfUnderscore(range: SourceRange) -> Diagnostic {
+    return Diagnostic(
+      range: range,
+      message: "keyword '_' can only be used on the left side of an assignment")
+  }
+
   static func missingMember(member: String, in type: Type, range: SourceRange) -> Diagnostic {
     return Diagnostic(
       range: range,
