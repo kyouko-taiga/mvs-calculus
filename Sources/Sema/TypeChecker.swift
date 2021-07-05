@@ -419,32 +419,43 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
   public mutating func visit(_ expr: inout AssignExpr) -> Bool {
     // Save the expected type, if any.
-    let expected = expectedType
+    let expectedExprType = expectedType
 
-    // Type check the lvalue.
-    expectedType = nil
-    let (mutability, lvalueType) = expr.lvalue.accept(pathVisitor: &self)
+    var isWellTyped: Bool
+    if var lvalue = expr.lvalue as? NamePath, lvalue.name == "_" {
+      // Type check the value being assigned.
+      expectedType = nil
+      isWellTyped = expr.rvalue.accept(&self)
 
-    // Targets of assignments should be mutable.
-    guard mutability == .var else {
-      diagConsumer.consume(.immutableLValue(type: lvalueType, range: expr.lvalue.range))
-      expr.type = .error
-      return false
+      // Infer the type of the lvalue as that of the rvalue.
+      lvalue.type = expr.rvalue.type
+      expr.lvalue = lvalue
+    } else {
+      // Type check the lvalue.
+      expectedType = nil
+      let (mutability, type) = expr.lvalue.accept(pathVisitor: &self)
+      isWellTyped = !type.hasError
+
+      // Targets of assignments should be mutable.
+      if mutability != .var {
+        diagConsumer.consume(.immutableLValue(type: type, range: expr.lvalue.range))
+        isWellTyped = false
+      }
+
+      // Type check the value being assigned.
+      expectedType = type
+      isWellTyped = expr.rvalue.accept(&self) && isWellTyped
     }
 
-    // Type check the value being assigned.
-    expectedType = expr.lvalue.type
-    var isWellTyped = expr.rvalue.accept(&self)
-
     // Type check the body of the expression.
-    expectedType = expected
+    expectedType = expectedExprType
     isWellTyped = expr.body.accept(&self) && isWellTyped
-    expr.type = expr.body.type
 
     // Make sure the type we inferred is the same type as what was expected.
-    guard (expected == nil) || (expected == expr.type) else {
+    expr.type = expr.body.type
+    guard (expectedExprType == nil) || (expectedExprType == expr.type) else {
       diagConsumer.consume(
-        .typeError(expected: expected!, actual: expr.type!, range: expr.range))
+        .typeError(expected: expectedExprType!, actual: expr.type!, range: expr.range))
       return false
     }
 
@@ -547,7 +558,12 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       path.type = .func(params: [], output: .float)
       path.mutability = .let
     } else {
-      diagConsumer.consume(.undefinedBinding(name: path.name, range: path.range))
+      if path.name == "_" {
+        diagConsumer.consume(.invalidUseOfUnderscore(range: path.range))
+      } else {
+        diagConsumer.consume(.undefinedBinding(name: path.name, range: path.range))
+      }
+
       path.type = .error
       path.mutability = .let
     }
