@@ -266,6 +266,7 @@ public struct MVSParser {
     .or(bindingExpr)
     .or(funcBindingExpr)
     .or(funcExpr)
+    .or(condExpr)
     .or(operExpr)
     .or((take(.lParen) << expr) >> take(.rParen))
 
@@ -347,6 +348,19 @@ public struct MVSParser {
     .then((take(.comma) << expr).many >> take(.comma).optional)
     .map({ (head, tail) in
       [head] + tail
+    })
+
+  lazy var condExpr = take(.if)
+    .then(expr)
+    .then(take(.query) << expr)
+    .then(take(.bang) << expr)
+    .map({ (tree) -> Expr in
+      let (((head, cond), succ), fail) = tree
+      return CondExpr(
+        cond: cond,
+        succ: succ,
+        fail: fail,
+        range: head.range ..< fail.range)
     })
 
   lazy var operExpr = cmpOperExpr.or(addOperExpr).or(mulOperExpr)

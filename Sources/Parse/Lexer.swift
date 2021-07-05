@@ -45,7 +45,6 @@ struct Lexer: IteratorProtocol {
       case "let"    : token.kind = .let
       case "var"    : token.kind = .var
       case "fun"    : token.kind = .fun
-      case "else"   : token.kind = .error
       case "inout"  : token.kind = .inout
       case "struct" : token.kind = .struct
       default       : token.kind = .name
@@ -79,6 +78,7 @@ struct Lexer: IteratorProtocol {
     case ",": token.kind = .comma
     case ".": token.kind = .dot
     case ":": token.kind = .colon
+    case "?": token.kind = .query
     case "&": token.kind = .amp
     case "(": token.kind = .lParen
     case ")": token.kind = .rParen
@@ -110,6 +110,8 @@ struct Lexer: IteratorProtocol {
       if source.suffix(from: index).starts(with: "!=") {
         token.kind = .ne
         index = source.index(after: index)
+      } else {
+        token.kind = .bang
       }
 
     case "<":
