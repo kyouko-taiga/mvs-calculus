@@ -30,8 +30,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// The builder that is used to generate LLVM IR instructions.
   var builder: IRBuilder!
 
-  /// The discriminator of the next closure.
-  var nextClosureID = 0
+  /// The discriminator of the next function name.
+  var nextFuncID = 0
 
   /// The LLVM context owning the module.
   var llvm: LLVM.Context { builder.module.context }
@@ -806,53 +806,129 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return fn
   }
 
+  /// Creates a LLVM function corresponding to the specified literal. The function is only created,
+  /// its body is not emitted.
+  ///
+  /// - Parameters:
+  ///   - literal: A function literal.
+  ///   - name: The name of the binding to which the function will be assigned. This is `nil`
+  ///     unless the literal is part of a `FuncBindingExpr`.
+  ///   - inlinable: A Boolean value that indicates whether the function can be inlined.
+  ///
+  /// - Returns: a pair `(function, captures)` where `function` is the LLVM function that was
+  ///   created and `captures` is a dictionary with the function's local captures.
+  private mutating func createFunction(
+    literal   : inout FuncExpr,
+    name      : String?,
+    inlinable : Bool = true
+  ) -> (function: Function, captures: [String: Type]) {
+    guard case .func(let params, let output) = literal.type else { unreachable() }
 
-  private mutating func emitGlobalFunction(
-    decl: inout FuncExpr,
-    name: String,
-    inlinable: Bool = true
-  ) -> Function {
-    guard case .func(let params, let output) = decl.type else { unreachable() }
+    // Collect the symbols being captured by the function, excluding global functions and recursive
+    // references to the function's declaration.
+    let captures = literal.collectCaptures(excluding: { (n) -> Bool in
+      (bindings[n] is Function) || (n == name)
+    })
 
-    // Create the function.
-    let type = buildFunctionType(from: params, to: output, withEnvironment: false)
-    var fn = builder.addFunction(name, type: type)
-    fn.linkage = .private
+    // Create a function name.
+    let funcName = (name ?? "fun") + String(describing: nextFuncID)
+    nextFuncID += 1
+
+    // Create the LLVM function.
+    let type = buildFunctionType(from: params, to: output)
+    var function = builder.addFunction("_" + funcName, type: type)
+    function.linkage = .private
     if !inlinable {
-      fn.addAttribute(.noinline, to: .function)
+      function.addAttribute(.noinline, to: .function)
     }
 
-    // Save the builder's current insertion block and bindings to restore them later.
+    return (function, captures)
+  }
+
+  private mutating func emitLocalFunction(
+    literal       : inout FuncExpr,
+    function      : Function,
+    envType       : StructType?,
+    sortedCaptures: [(key: String, value: Type)]
+  ) {
+    // Configure the emitter's state.
     let oldInsertBlock = builder.insertBlock!
-    let oldBindings = bindings
-    defer {
-      builder.positionAtEnd(of: oldInsertBlock)
-      bindings = oldBindings
-    }
+    builder.positionAtEnd(of: function.appendBasicBlock(named: "entry"))
 
-    // Configure the local bindings.
-    builder.positionAtEnd(of: fn.appendBasicBlock(named: "entry"))
+    // Keep globally defined functions, as they do not appear in the captures.
+    let oldBindings = bindings
     bindings = bindings.filter({ $0.value is Function })
+
+    // Register the parameters.
+    guard case .func(params: _, let output) = literal.type else { unreachable() }
     let offset = output.isAddressOnly ? 1 : 0
-    for (i, param) in decl.params.enumerated() {
+    for (i, param) in literal.params.enumerated() {
       if param.type!.isAddressOnly {
-        bindings[param.name] = fn.parameters[i + offset]
+        bindings[param.name] = function.parameters[i + offset]
       } else {
         let alloca = addEntryAlloca(type: lower(param.type!))
-        builder.buildStore(fn.parameters[i + offset], to: alloca)
+        builder.buildStore(function.parameters[i + offset], to: alloca)
         bindings[param.name] = alloca
       }
     }
 
-    // Emit the function.
-    if output.isAddressOnly {
-      emit(move: &decl.body, to: fn.parameters[0])
-      builder.buildRetVoid()
-    } else {
-      builder.buildRet(decl.body.accept(&self))
+    // Register the local captures.
+    if let envType = envType {
+      let e = builder.buildBitCast(function.parameters.last!, type: envType.ptr)
+      for (i, capture) in sortedCaptures.enumerated() {
+        bindings[capture.key] = builder.buildStructGEP(e, type: envType, index: i)
+      }
     }
 
-    return fn
+    // Emit the body of the function.
+    if output.isAddressOnly {
+      emit(move: &literal.body, to: function.parameters[0])
+      builder.buildRetVoid()
+    } else {
+      builder.buildRet(literal.body.accept(&self))
+    }
+
+    // Restore the emitter's state.
+    builder.positionAtEnd(of: oldInsertBlock)
+    bindings = oldBindings
+  }
+
+  private mutating func emitGlobalFunction(
+    literal       : inout FuncExpr,
+    function      : Function
+  ) {
+    // Configure the emitter's state.
+    let oldInsertBlock = builder.insertBlock!
+    builder.positionAtEnd(of: function.appendBasicBlock(named: "entry"))
+
+    // Keep globally defined functions, as they do not appear in the captures.
+    let oldBindings = bindings
+    bindings = bindings.filter({ $0.value is Function })
+
+    // Register the parameters.
+    guard case .func(params: _, let output) = literal.type else { unreachable() }
+    let offset = output.isAddressOnly ? 1 : 0
+    for (i, param) in literal.params.enumerated() {
+      if param.type!.isAddressOnly {
+        bindings[param.name] = function.parameters[i + offset]
+      } else {
+        let alloca = addEntryAlloca(type: lower(param.type!))
+        builder.buildStore(function.parameters[i + offset], to: alloca)
+        bindings[param.name] = alloca
+      }
+    }
+
+    // Emit the body of the function.
+    if output.isAddressOnly {
+      emit(move: &literal.body, to: function.parameters[0])
+      builder.buildRetVoid()
+    } else {
+      builder.buildRet(literal.body.accept(&self))
+    }
+
+    // Restore the emitter's state.
+    builder.positionAtEnd(of: oldInsertBlock)
+    bindings = oldBindings
   }
 
   // ----------------------------------------------------------------------------------------------
@@ -1163,15 +1239,9 @@ public struct Emitter: ExprVisitor, PathVisitor {
   }
 
   public mutating func visit(_ expr: inout FuncExpr) -> IRValue {
-    guard case .func(let params, let output) = expr.type else { unreachable() }
-
-    // Generate a prefix for the name of the functions we're about to emit.
-    let prefix = "_closure\(nextClosureID)"
-    nextClosureID += 1
-
-    // Gathers the free variables of the function.
-    let captures = expr.collectCaptures(excluding: { bindings[$0] is Function })
-      .sorted(by: { a, b in a.key < b.key })
+    // Create the LLVM function.
+    let (function, captures) = createFunction(literal: &expr, name: nil)
+    let sortedCaptures = captures.sorted(by: { a, b in a.key < b.key })
 
     // Create the function's environment.
     let envType: StructType?
@@ -1182,18 +1252,16 @@ public struct Emitter: ExprVisitor, PathVisitor {
       envType = nil
       env = voidPtr.null()
     } else {
-      // Create the environment type.
+      // Allocate the environment.
       envType = builder.createStruct(
-        name : "\(prefix).env",
-        types: captures.map({ _, type in lower(type) }))
-
-      // Allocate the environment and copy the captured bindings.
+        name : "\(function.name).env",
+        types: sortedCaptures.map({ _, type in lower(type) }))
       env = builder.buildCall(runtime.malloc, args: [stride(of: envType!)])
+
+      // Initialize the environment.
       let buf = builder.buildBitCast(env, type: envType!.ptr)
-
-      for (i, capture) in captures.enumerated() {
+      for (i, capture) in sortedCaptures.enumerated() {
         let loc = builder.buildStructGEP(buf, type: envType!, index: i)
-
         let val = capture.value.isAddressOnly
           ? bindings[capture.key]!
           : builder.buildLoad(bindings[capture.key]!, type: lower(capture.value))
@@ -1201,50 +1269,19 @@ public struct Emitter: ExprVisitor, PathVisitor {
       }
     }
 
-    // Create the function.
-    var fn = builder.addFunction("\(prefix)", type: buildFunctionType(from: params, to: output))
-    fn.linkage = .private
-
     // Build the closure.
     let closure = buildClosure(
-      fn: fn, prefix: prefix, captures: captures, env: env, envType: envType)
-
-    // Save the builder's current insertion block and bindings to restore them at the end.
-    let oldInsertBlock = builder.insertBlock!
-    let oldBindings = bindings
-    defer {
-      builder.positionAtEnd(of: oldInsertBlock)
-      bindings = oldBindings
-    }
-
-    // Configure the local bindings.
-    builder.positionAtEnd(of: fn.appendBasicBlock(named: "entry"))
-    bindings = bindings.filter({ $0.value is Function })
-    let offset = output.isAddressOnly ? 1 : 0
-    for (i, param) in expr.params.enumerated() {
-      if param.type!.isAddressOnly {
-        bindings[param.name] = fn.parameters[i + offset]
-      } else {
-        let alloca = addEntryAlloca(type: lower(param.type!))
-        builder.buildStore(fn.parameters[i + offset], to: alloca)
-        bindings[param.name] = alloca
-      }
-    }
-
-    if let eType = envType {
-      let e = builder.buildBitCast(fn.parameters.last!, type: eType.ptr)
-      for (i, capture) in captures.enumerated() {
-        bindings[capture.key] = builder.buildStructGEP(e, type: eType, index: i)
-      }
-    }
+      function: function,
+      captures: sortedCaptures,
+      env     : env,
+      envType : envType)
 
     // Emit the function.
-    if output.isAddressOnly {
-      emit(move: &expr.body, to: fn.parameters[0])
-      builder.buildRetVoid()
-    } else {
-      builder.buildRet(expr.body.accept(&self))
-    }
+    emitLocalFunction(
+      literal       : &expr,
+      function      : function,
+      envType       : envType,
+      sortedCaptures: sortedCaptures)
 
     return closure
   }
@@ -1253,7 +1290,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     guard case .func(let params, let output) = expr.callee.type else { unreachable() }
 
     var fun: IRValue
-    var env: IRValue?
+    var env: IRValue
 
     // Extract the function.
     if let path = expr.callee as? NamePath,
@@ -1261,6 +1298,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     {
       // The function can be dispatched statically.
       fun = f
+      env = voidPtr.null()
     } else {
       // Emit the callee.
       let callee = builder.buildBitCast(expr.callee.accept(&self), type: anyClosureType.ptr)
@@ -1273,7 +1311,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
       // Extract the environment.
       env = builder.buildStructGEP(callee, type: anyClosureType, index: 1)
-      env = builder.buildLoad(env!, type: voidPtr)
+      env = builder.buildLoad(env, type: voidPtr)
     }
 
     // Emit the arguments.
@@ -1300,9 +1338,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       }
     }
 
-    if let e = env {
-      args.append(e)
-    }
+    args.append(env)
 
     // Emit the call.
     let result: IRValue
@@ -1407,18 +1443,16 @@ public struct Emitter: ExprVisitor, PathVisitor {
       return body
     }
 
-    // If the binding declares a function, attempts to define it globally.
-    if var decl = expr.initializer as? FuncExpr, bindings[expr.decl.name] == nil {
-      defer { expr.initializer = decl }
+    // If the binding declares a function, attempt to define it globally.
+    if var literal = expr.initializer as? FuncExpr {
+      defer { expr.initializer = literal }
 
-      // If the function has no captures, then it can be emitted as a global symbol.
-      let captures = decl.collectCaptures(excluding: { bindings[$0] is Function })
+      // If the function has no local captures, then it can be emitted as a global symbol.
+      let captures = literal.collectCaptures(excluding: { bindings[$0] is Function })
       if captures.isEmpty {
-        let value = emitGlobalFunction(
-          decl      : &decl,
-          name      : "_g" + expr.decl.name,
-          inlinable : !expr.decl.name.hasPrefix("noinline_"))
-        return cont(value, shouldDrop: false)
+        let (function, _) = createFunction(literal: &literal, name: expr.decl.name)
+        emitGlobalFunction(literal: &literal, function: function)
+        return cont(function, shouldDrop: false)
       }
     }
 
@@ -1428,12 +1462,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // If the binding is constant and initialized by a constant lvalue, we can create an alias and
-    // avoid copying. An exception must be made for functions, as stateful closures may mutate when
-    // they are called.
+    // avoid copying.
     if var path = expr.initializer as? Path,
        expr.decl.mutability == .let,
-       path.mutability! == .let,
-       !path.type!.isFuncType
+       path.mutability! == .let
     {
       // Emit the lvalue corresponding to the path.
       let (loc, origin) = path.accept(pathVisitor: &self)
@@ -1513,6 +1545,27 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return cont(alloca, shouldDrop: true)
   }
 
+  public mutating func visit(_ expr: inout FuncBindingExpr) -> IRValue {
+    // Create the LLVM function.
+    let (function, captures) = createFunction(literal: &expr.literal, name: expr.name)
+    let sortedCaptures = captures.sorted(by: { a, b in a.key < b.key })
+
+    // If the function has no local captures, then it can be emitted as a global symbol.
+    if sortedCaptures.isEmpty {
+      bindings[expr.name] = function
+      emitGlobalFunction(literal: &expr.literal, function: function)
+
+      // Emit the body of the expression.
+      let body = expr.body.accept(&self)
+
+      // Restore the bindings.
+      bindings[expr.name] = nil
+      return body
+    }
+
+    // FIXME
+    fatalError("non-local captures in named functions are not implemented yet")
+  }
 
   public mutating func visit(_ expr: inout AssignExpr) -> IRValue {
     // Nothing to do if we're assigning the variable to itself (e.g., `a = a in ...`).
@@ -1550,8 +1603,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     let loc = bindings[expr.name]!
 
     if let fn = loc as? Function {
-      return buildClosure(
-        fn: fn, prefix: "_g", captures: [], env: voidPtr.null(), envType: nil)
+      return buildClosure(function: fn, captures: [], env: voidPtr.null(), envType: nil)
     }
 
     if expr.type!.isAddressOnly {
@@ -1828,14 +1880,12 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// Builds a closure.
   ///
   /// - Parameters:
-  ///   - fn: The lifted function representing the closure.
-  ///   - prefix: The string prefix for the meta functions.
+  ///   - function: The lifted function representing the closure.
   ///   - captures: The list of symbols being captured by the closure.
   ///   - env: The closure's environment.
   ///   - envType: The type of the closure's environment.
   private func buildClosure(
-    fn      : Function,
-    prefix  : String,
+    function: Function,
     captures: [(String, Type)],
     env     : IRValue,
     envType : StructType?
@@ -1846,19 +1896,19 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     builder.buildStore(
-      builder.buildBitCast(fn, type: voidPtr),
+      builder.buildBitCast(function, type: voidPtr),
       to: gep(index: 0))
     builder.buildStore(
       env,
       to: gep(index: 1))
     builder.buildStore(
-      emit(copyFuncForClosure: prefix, captures: captures, envType: envType),
+      emit(copyFuncForClosure: function.name, captures: captures, envType: envType),
       to: gep(index: 2))
     builder.buildStore(
-      emit(dropFuncForClosure: prefix, captures: captures, envType: envType),
+      emit(dropFuncForClosure: function.name, captures: captures, envType: envType),
       to: gep(index: 3))
     builder.buildStore(
-      emit(equalityFuncForClosure: prefix, captures: captures, envType: envType),
+      emit(equalityFuncForClosure: function.name, captures: captures, envType: envType),
       to: gep(index: 4))
 
     return closure

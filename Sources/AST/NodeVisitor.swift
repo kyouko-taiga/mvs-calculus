@@ -24,6 +24,7 @@ public protocol ExprVisitor {
   mutating func visit(_ expr: inout OperExpr) -> ExprResult
   mutating func visit(_ expr: inout InoutExpr) -> ExprResult
   mutating func visit(_ expr: inout BindingExpr) -> ExprResult
+  mutating func visit(_ expr: inout FuncBindingExpr) -> ExprResult
   mutating func visit(_ expr: inout AssignExpr) -> ExprResult
   mutating func visit(_ expr: inout ErrorExpr) -> ExprResult
 
