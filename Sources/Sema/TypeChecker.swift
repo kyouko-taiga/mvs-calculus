@@ -65,7 +65,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       }
 
       // Type check the declaration.
-      guard visit(&decl.props[i]) else {
+      guard (decl.props[i].sign != nil) && visit(&decl.props[i]) else {
         // Type checking failed deeper in the AST. We don't need to emit any diagnostic.
         return false
       }
@@ -84,11 +84,11 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
   public mutating func visit(_ decl: inout BindingDecl) -> Bool {
     // Realize the type of the signature.
-    let type = decl.sign.accept(&self)
+    let type = decl.sign?.accept(&self)
     decl.type = type
 
     // Bail out if the signature has an error.
-    return !type.hasError
+    return (type == nil) || !type!.hasError
   }
 
   public mutating func visit(_ decl: inout ParamDecl) -> Bool {
@@ -361,7 +361,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     var isWellTyped = expr.initializer.accept(&self)
 
     // Update the typing context.
-    gamma[expr.decl.name] = (expr.decl.mutability, expr.decl.type!)
+    gamma[expr.decl.name] = (expr.decl.mutability, expr.decl.type ?? expr.initializer.type!)
 
     // Type check the body of the expression.
     expectedType = expectedExprType

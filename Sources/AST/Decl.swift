@@ -55,9 +55,9 @@ public struct BindingDecl: Decl {
   public var name: String
 
   /// The type signature of the binding.
-  public var sign: Sign
+  public var sign: Sign?
 
-  public init(mutability: MutabilityQualifier, name: String, sign: Sign, range: SourceRange) {
+  public init(mutability: MutabilityQualifier, name: String, sign: Sign?, range: SourceRange) {
     self.mutability = mutability
     self.name = name
     self.sign = sign

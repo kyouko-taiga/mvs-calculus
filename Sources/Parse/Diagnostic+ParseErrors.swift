@@ -28,6 +28,12 @@ extension Diagnostic {
       message: "expected operator")
   }
 
+  static func missingPropertyAnnotation(range: SourceRange) -> Diagnostic {
+    return Diagnostic(
+      range: range,
+      message: "missing type annotation in property declaration")
+  }
+
   static func invalidLiteral(value: Substring, range: SourceRange) -> Diagnostic {
     return Diagnostic(
       range: range,

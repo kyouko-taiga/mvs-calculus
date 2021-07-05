@@ -53,11 +53,20 @@ public struct MVSParser {
   lazy var structDecl = (structDeclHead ++ structDeclBody)
     .assemble({ (state, tree) -> StructDecl in
       let ((head, name), (props, tail)) = tree
+
+      // Make sure that all property declarations are annotated.
+      for prop in props where prop.sign == nil {
+        let diag = Diagnostic.missingPropertyAnnotation(range: prop.range)
+        state.report(ParseError(diagnostic: diag))
+      }
+
+      // Create the struct.
       let decl = StructDecl(
         name: name,
         props: props,
         range: head.range ..< tail.range)
 
+      // Register the struct in the set of known types.
       if name != "<error>" {
         state.knownStructs.insert(decl.name)
       }
@@ -77,16 +86,16 @@ public struct MVSParser {
     })
     .then(take(.rBrace))
 
-  /// `( 'let' | 'var' ) name ':' sign`
+  /// `( 'let' | 'var' ) name ( ':' sign )?`
   lazy var bindingDecl = bindingDeclHead
-    .then((take(.colon) << sign).catch(errorHandler(ErrorSign.init)))
+    .then((take(.colon) << sign.catch(errorHandler(ErrorSign.init))).optional)
     .map({ (tree) -> BindingDecl in
       let ((head, name), sign) = tree
       return BindingDecl(
         mutability: head.kind == .let ? .let : .var,
         name: name,
         sign: sign,
-        range: head.range ..< sign.range)
+        range: head.range ..< (sign?.range ?? head.range))
     })
 
   /// `( 'let' | 'var' ) name`
@@ -99,12 +108,14 @@ public struct MVSParser {
   lazy var funcDecl = declHead(introducer: .fun)
     .then(funcExpr)
 
+  /// `paramDecl ( ',' paramDecl )*`
   lazy var paramDeclList = paramDecl
     .then((take(.comma) << paramDecl).many >> take(.comma).optional)
     .map({ (head, tail) in
       [head] + tail
     })
 
+  /// `name ':' sign`
   lazy var paramDecl = take(.name)
     .then(take(.colon) << sign)
     .assemble({ (state, tree) -> ParamDecl in
