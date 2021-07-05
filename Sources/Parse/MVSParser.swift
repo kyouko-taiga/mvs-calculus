@@ -5,6 +5,46 @@ import Diesel
 /// A parser.
 public struct MVSParser {
 
+  public init() {
+    expr.define(cmpExpr)
+
+    sign.define(
+      typeDeclRefSign
+        .or(arraySign)
+        .or(funcSign)
+        .or(inoutSign)
+        .or((take(.lParen) << sign) >> take(.rParen)))
+  }
+
+  public mutating func parse(source: String, diagConsumer: DiagnosticConsumer) -> Program? {
+    let tokens = Array(AnySequence({ Lexer(source: source) }))
+    let state = ParserState(
+      source: source,
+      tokens: tokens[0...],
+      diagConsumer: diagConsumer)
+
+    switch program.parse(state) {
+    case .success(let program, let remainder):
+      if let next = remainder.tokens.first {
+        let diag = Diagnostic(
+          range: next.range, message: "unexpected token")
+        diagConsumer.consume(diag)
+      }
+
+      return program
+
+    case .failure(let error):
+      diagConsumer.consume(error: error, at: source.startIndex ..< source.startIndex)
+    }
+
+    return nil
+  }
+
+  // ----------------------------------------------------------------------------------------------
+  // MARK: Declarations
+  // ----------------------------------------------------------------------------------------------
+
+  /// `( structDecl 'in' )* expr`
   lazy var program = (structDecl >> take(.in)).many
     .then(expr)
     .map(Program.init)
@@ -16,7 +56,7 @@ public struct MVSParser {
       let decl = StructDecl(
         name: name,
         props: props,
-        range: head.range.lowerBound ..< tail.range.upperBound)
+        range: head.range ..< tail.range)
 
       if name != "<error>" {
         state.knownStructs.insert(decl.name)
@@ -26,13 +66,7 @@ public struct MVSParser {
     })
 
   /// `'struct' name`
-  lazy var structDeclHead = take(.struct)
-    .then(take(.name)
-            .assemble ({ (state, name) in String(name.value(in: state.source)) })
-            .catch    ({ (error, state) in
-              state.report(error)
-              return .success("<error>", state)
-            }))
+  lazy var structDeclHead = declHead(introducer: .struct)
 
   /// `'{' bindingDecl* '}'`
   lazy var structDeclBody = take(.lBrace)
@@ -44,26 +78,26 @@ public struct MVSParser {
     .then(take(.rBrace))
 
   /// `( 'let' | 'var' ) name ':' sign`
-  lazy var bindingDecl = (take(.let).or(take(.var)))
-    .then(take(.name)
-            .assemble ({ (state, name) in String(name.value(in: state.source)) })
-            .catch    ({ (error, state) in
-              state.report(error)
-              return .success("<error>", state)
-            }))
-    .then((take(.colon) << sign)
-            .catch    ({ (error, state) in
-              state.report(error)
-              return .success(ErrorSign(range: state.errorRange), state)
-            }))
+  lazy var bindingDecl = bindingDeclHead
+    .then((take(.colon) << sign).catch(errorHandler(ErrorSign.init)))
     .map({ (tree) -> BindingDecl in
       let ((head, name), sign) = tree
       return BindingDecl(
         mutability: head.kind == .let ? .let : .var,
         name: name,
         sign: sign,
-        range: head.range.lowerBound ..< sign.range.upperBound)
+        range: head.range ..< sign.range)
     })
+
+  /// `( 'let' | 'var' ) name`
+  lazy var bindingDeclHead = (take(.let).or(take(.var))).then(
+    take(.name)
+      .assemble({ (state, name) in String(name.value(in: state.source)) })
+      .catch(errorHandler({ _ in "<error>" })))
+
+  /// `'fun' name funcExpr`
+  lazy var funcDecl = declHead(introducer: .fun)
+    .then(funcExpr)
 
   lazy var paramDeclList = paramDecl
     .then((take(.comma) << paramDecl).many >> take(.comma).optional)
@@ -77,8 +111,31 @@ public struct MVSParser {
       let (name, sign) = tree
       return ParamDecl(
         name: String(name.value(in: state.source)), sign: sign,
-        range: name.range.lowerBound ..< sign.range.upperBound)
+        range: name.range ..< sign.range)
     })
+
+  /// Creates a parser that recognizes a named declaration header.
+  private func declHead(introducer: Token.Kind) -> AnyParser<(Token, String), ParserState> {
+    let p = take(introducer).then(
+      take(.name)
+        .assemble({ (state, name) in String(name.value(in: state.source)) })
+        .catch(errorHandler({ _ in "<error>" })))
+
+    return AnyParser(p)
+  }
+
+  private func errorHandler<T>(
+    _ makeSubst: @escaping (SourceRange) -> T
+  ) -> (ParseError, ParserState) -> ParseResult<T, ParserState> {
+    return { (error, state) in
+      state.report(error)
+      return .success(makeSubst(state.errorRange), state)
+    }
+  }
+
+  // ----------------------------------------------------------------------------------------------
+  // MARK: Expressions
+  // ----------------------------------------------------------------------------------------------
 
   let expr = ForwardParser<Expr, ParserState>()
 
@@ -87,9 +144,7 @@ public struct MVSParser {
     .map({ (head, tail) -> Expr in
       tail.reduce(into: head, { (lhs, pair) in
         let (oper, rhs) = pair
-        lhs = InfixExpr(
-          lhs: lhs, rhs: rhs, oper: oper,
-          range: lhs.range.lowerBound ..< rhs.range.upperBound)
+        lhs = InfixExpr(lhs: lhs, rhs: rhs, oper: oper, range: lhs.range ..< rhs.range)
       })
     })
 
@@ -98,9 +153,7 @@ public struct MVSParser {
     .map({ (head, tail) -> Expr in
       tail.reduce(into: head, { (lhs, pair) in
         let (oper, rhs) = pair
-        lhs = InfixExpr(
-          lhs: lhs, rhs: rhs, oper: oper,
-          range: lhs.range.lowerBound ..< rhs.range.upperBound)
+        lhs = InfixExpr(lhs: lhs, rhs: rhs, oper: oper, range: lhs.range ..< rhs.range)
       })
     })
 
@@ -109,9 +162,7 @@ public struct MVSParser {
     .map({ (head, tail) -> Expr in
       tail.reduce(into: head, { (lhs, pair) in
         let (oper, rhs) = pair
-        lhs = InfixExpr(
-          lhs: lhs, rhs: rhs, oper: oper,
-          range: lhs.range.lowerBound ..< rhs.range.upperBound)
+        lhs = InfixExpr(lhs: lhs, rhs: rhs, oper: oper, range: lhs.range ..< rhs.range)
       })
     })
 
@@ -123,9 +174,7 @@ public struct MVSParser {
       guard let path = expr as? Path else {
         throw ParseError(diagnostic: Diagnostic.expectedPath(expr: expr))
       }
-      return InoutExpr(
-        path:  path,
-        range: head.range.lowerBound ..< expr.range.upperBound)
+      return InoutExpr(path:  path, range: head.range ..< expr.range)
     })
 
   lazy var postExpr = primaryExpr
@@ -136,7 +185,7 @@ public struct MVSParser {
       for suffix in suffixes {
         switch suffix {
         case .call(let args, let tail):
-          let range = expr.range.lowerBound ..< tail.range.upperBound
+          let range = expr.range ..< tail.range
 
           // Check whether the expression is a struct literal, or an arbitrary function call.
           if let path = expr as? NamePath, (state.knownStructs.contains(path.name)) {
@@ -146,18 +195,18 @@ public struct MVSParser {
           }
 
         case .subs(let index, let tail):
-          let range = expr.range.lowerBound ..< tail.range.upperBound
+          let range = expr.range ..< tail.range
           expr = ElemPath(base: expr, index: index, range: range)
 
         case .prop(let name):
-          let range = expr.range.lowerBound ..< name.range.upperBound
+          let range = expr.range ..< name.range
           expr = PropPath(base: expr, name: String(name.value(in: state.source)), range: range)
 
         case .assign(let rhs, let body):
           guard let lhs = expr as? Path else {
             throw ParseError(diagnostic: Diagnostic.expectedPath(expr: expr))
           }
-          let range = lhs.range.lowerBound ..< body.range.upperBound
+          let range = lhs.range ..< body.range
           expr = AssignExpr(lvalue: lhs, rvalue: rhs, body: body, range: range)
         }
       }
@@ -203,8 +252,8 @@ public struct MVSParser {
     .or(intExpr)
     .or(floatExpr)
     .or(arrayExpr)
-    .or(namePath)
     .or(bindingExpr)
+    .or(funcBindingExpr)
     .or(funcExpr)
     .or(operExpr)
     .or((take(.lParen) << expr) >> take(.rParen))
@@ -243,9 +292,7 @@ public struct MVSParser {
     .then(take(.rBracket))
     .map({ (tree) -> Expr in
       let ((head, elems), tail) = tree
-      return ArrayExpr(
-        elems: elems ?? [],
-        range: head.range.lowerBound ..< head.range.upperBound)
+      return ArrayExpr(elems: elems ?? [], range: head.range ..< head.range)
     })
 
   lazy var bindingExpr = bindingDecl
@@ -257,7 +304,18 @@ public struct MVSParser {
         decl: decl,
         initializer: initializer,
         body: body,
-        range: decl.range.lowerBound ..< body.range.upperBound)
+        range: decl.range ..< body.range)
+    })
+
+  lazy var funcBindingExpr = funcDecl
+    .then(take(.in) << expr)
+    .map({ tree -> Expr in
+      let (((head, name), literal), body) = tree
+      return FuncBindingExpr(
+        name: name,
+        literal: literal as! FuncExpr,
+        body: body,
+        range: head.range ..< body.range)
     })
 
   lazy var funcExpr = take(.lParen)
@@ -271,7 +329,7 @@ public struct MVSParser {
         params: params ?? [],
         output: output,
         body: body,
-        range: head.range.lowerBound ..< tail.range.upperBound)
+        range: head.range ..< tail.range)
     })
 
   lazy var exprList = expr
@@ -289,6 +347,10 @@ public struct MVSParser {
 
   let mulOperExpr = oper(kinds: [.mul, .div])
 
+  // ----------------------------------------------------------------------------------------------
+  // MARK: Signatures
+  // ----------------------------------------------------------------------------------------------
+
   let sign = ForwardParser<Sign, ParserState>()
 
   let typeDeclRefSign = take(.name)
@@ -303,9 +365,7 @@ public struct MVSParser {
     .then(take(.rBracket))
     .map({ (tree) -> Sign in
       let ((head, base), tail) = tree
-      return ArraySign(
-        base: base,
-        range: head.range.lowerBound ..< tail.range.upperBound)
+      return ArraySign(base: base, range: head.range ..< tail.range)
     })
 
   lazy var funcSign = ((take(.lParen) ++ signList.optional) >> take(.rParen))
@@ -315,7 +375,7 @@ public struct MVSParser {
       return FuncSign(
         params: params ?? [],
         output: output,
-        range: head.range.lowerBound ..< output.range.upperBound)
+        range: head.range ..< output.range)
     })
 
   lazy var signList = sign
@@ -327,43 +387,8 @@ public struct MVSParser {
   lazy var inoutSign = take(.inout)
     .then(sign)
     .map({ (head, sign) -> Sign in
-      InoutSign(
-        base: sign,
-        range: head.range.lowerBound ..< sign.range.upperBound)
+      InoutSign(base: sign, range: head.range ..< sign.range)
     })
-
-  public init() {
-    expr.define(cmpExpr)
-    sign.define(typeDeclRefSign
-                  .or(arraySign)
-                  .or(funcSign)
-                  .or(inoutSign)
-                  .or((take(.lParen) << sign) >> take(.rParen)))
-  }
-
-  public mutating func parse(source: String, diagConsumer: DiagnosticConsumer) -> Program? {
-    let tokens = Array(AnySequence({ Lexer(source: source) }))
-    let state = ParserState(
-      source: source,
-      tokens: tokens[0...],
-      diagConsumer: diagConsumer)
-
-    switch program.parse(state) {
-    case .success(let program, let remainder):
-      if let next = remainder.tokens.first {
-        let diag = Diagnostic(
-          range: next.range, message: "unexpected token")
-        diagConsumer.consume(diag)
-      }
-
-      return program
-
-    case .failure(let error):
-      diagConsumer.consume(error: error, at: source.startIndex ..< source.startIndex)
-    }
-
-    return nil
-  }
 
 }
 

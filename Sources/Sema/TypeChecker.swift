@@ -381,6 +381,37 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     return isWellTyped
   }
 
+  public mutating func visit(_ expr: inout FuncBindingExpr) -> ExprResult {
+    defer { expectedType = nil }
+
+    // Save the expected type, if any.
+    let expectedExprType = expectedType
+
+    // Type check the signature of the function.
+    expr.literal.type = visit(signOf: &expr.literal)
+
+    // Type check the body of the function.
+    gamma[expr.name] = (.let, expr.literal.type!)
+    var isWellTyped = visit(bodyOf: &expr.literal) && !expr.literal.type!.hasError
+
+    // Type check the body of the binding expression.
+    expectedType = expectedExprType
+    isWellTyped = expr.body.accept(&self) && isWellTyped
+    expr.type = expr.body.type
+
+    // Restore the typing context.
+    gamma[expr.name] = nil
+
+    // Make sure the type we inferred is the same type as what was expected.
+    guard (expectedExprType == nil) || (expectedExprType == expr.type) else {
+      diagConsumer.consume(
+        .typeError(expected: expectedExprType!, actual: expr.type!, range: expr.range))
+      return false
+    }
+
+    return isWellTyped
+  }
+
   public mutating func visit(_ expr: inout AssignExpr) -> Bool {
     // Save the expected type, if any.
     let expected = expectedType

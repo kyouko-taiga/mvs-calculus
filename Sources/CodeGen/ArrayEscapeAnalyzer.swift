@@ -73,8 +73,12 @@ struct ArrayEscapeAnalzyer: ExprVisitor {
       return true
     }
 
-    return expr.decl.name != name
-        && expr.body.accept(&self)
+    return (expr.decl.name != name) && expr.body.accept(&self)
+  }
+
+  mutating func visit(_ expr: inout FuncBindingExpr) -> Bool {
+    return (expr.name != name)
+        && (expr.body.accept(&self) || expr.literal.accept(&self))
   }
 
   mutating func visit(_ expr: inout AssignExpr) -> Bool {

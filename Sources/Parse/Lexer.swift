@@ -44,6 +44,7 @@ struct Lexer: IteratorProtocol {
       case "in"     : token.kind = .in
       case "let"    : token.kind = .let
       case "var"    : token.kind = .var
+      case "fun"    : token.kind = .fun
       case "else"   : token.kind = .error
       case "inout"  : token.kind = .inout
       case "struct" : token.kind = .struct

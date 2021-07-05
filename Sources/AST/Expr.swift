@@ -319,6 +319,35 @@ public struct BindingExpr: Expr {
 
 }
 
+/// A (potentially recursive) function binding.
+public struct FuncBindingExpr: Expr {
+
+  public var range: SourceRange
+
+  public var type: Type?
+
+  /// The name of the binding.
+  public var name: String
+
+  /// The function literal of the binding.
+  public var literal: FuncExpr
+
+  /// The body of the expression.
+  public var body: Expr
+
+  public init(name: String, literal: FuncExpr, body: Expr, range: SourceRange) {
+    self.name = name
+    self.literal = literal
+    self.body = body
+    self.range = range
+  }
+
+  public mutating func accept<V>(_ visitor: inout V) -> V.ExprResult where V: ExprVisitor {
+    visitor.visit(&self)
+  }
+
+}
+
 /// An assignment.
 public struct AssignExpr: Expr {
 
