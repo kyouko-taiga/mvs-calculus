@@ -1,0 +1,8 @@
+/// Computes the factorial of the specified positive integer.
+fun fact(n: Int) -> Int {
+  if n > 1
+    ? n * fact(n - 1)
+    ! 1
+} in
+
+fact(6)
