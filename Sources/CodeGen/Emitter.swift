@@ -300,7 +300,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     rhs = builder.buildLoad(rhs, type: IntType.int64)
     builder.buildRet(zext(builder.buildICmp(lhs, rhs, .equal)))
 
-    return builder.addGlobal(
+    var metatype = builder.addGlobal(
       "_Int.Type", initializer: metatypeType.constant(
         values: [
           stride(of: IntType.int64),
@@ -309,6 +309,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
           anyCopyFuncType.ptr.null(),
           equalFn,
         ]))
+    metatype.linkage = .private
+    return metatype
   }
 
   /// The metatype of the built-in `Float` type.
@@ -336,7 +338,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     rhs = builder.buildLoad(rhs, type: FloatType.double)
     builder.buildRet(zext(builder.buildFCmp(lhs, rhs, .orderedEqual)))
 
-    return builder.addGlobal(
+    var metatype = builder.addGlobal(
       "_Float.Type", initializer: metatypeType.constant(
         values: [
           stride(of: IntType.int64),
@@ -345,6 +347,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
           anyCopyFuncType.ptr.null(),
           equalFn,
         ]))
+    metatype.linkage = .private
+    return metatype
   }
 
   /// The metatype for all closures.
@@ -414,7 +418,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // Create the metatype.
-    return builder.addGlobal(
+    var metatype = builder.addGlobal(
       "_AnyClosure.Type", initializer: metatypeType.constant(
         values: [
           stride(of: anyClosureType),
@@ -423,6 +427,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
           copyFn,
           equalFn,
         ]))
+    metatype.linkage = .private
+    return metatype
   }
 
   private func emit(metatypeFor decl: StructDecl, irType: StructType) -> Global {
@@ -482,7 +488,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
         ]))
 
     // Create the metatype.
-    return builder.addGlobal(
+    var metatype = builder.addGlobal(
       "\(decl.name).Type", initializer: metatypeType.constant(
         values: [
           stride(of: irType),
@@ -491,6 +497,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
           copyFn,
           equalityFn,
         ]))
+    metatype.linkage = .private
+    return metatype
   }
 
   private func emit(metatypeForArrayOf elemType: Type) -> Global {
@@ -543,7 +551,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // Create the metatype.
-    return builder.addGlobal(
+    var metatype = builder.addGlobal(
       "\(prefix).Type", initializer: metatypeType.constant(
         values: [
           stride(of: anyArrayType),
@@ -552,6 +560,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
           copyFn,
           anyEqualityFuncType.ptr.null(),
         ]))
+    metatype.linkage = .private
+    return metatype
   }
 
   private func emit(copyFuncFor decl: StructDecl, irType: StructType) -> Function {
