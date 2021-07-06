@@ -56,21 +56,7 @@ struct Lexer: IteratorProtocol {
 
     // Scan for numbers.
     if head.isDigit {
-      // Consume the integer part of the literal.
-      take(while: { $0.isDigit })
-      token.kind = .int
-
-      // Consume the decimal part of the literal, if any.
-      if peek() == "." {
-        index = source.index(after: index)
-        if take(while: { $0.isDigit }) != nil {
-          token.kind = .float
-        } else {
-          index = source.index(before: index)
-        }
-      }
-
-      token.range = token.range.lowerBound ..< index
+      scanNumberLiteral(&token)
       return token
     }
 
@@ -97,7 +83,13 @@ struct Lexer: IteratorProtocol {
         token.kind = .arrow
         index = source.index(after: index)
       } else {
-        token.kind = .sub
+        index = source.index(after: index)
+        if peek()?.isDigit ?? false {
+          scanNumberLiteral(&token)
+        } else {
+          token.kind = .sub
+        }
+        index = source.index(before: index)
       }
 
     case "=":
@@ -138,6 +130,40 @@ struct Lexer: IteratorProtocol {
     index = source.index(after: index)
     token.range = token.range.lowerBound ..< index
     return token
+  }
+
+  private mutating func scanNumberLiteral(_ token: inout Token) {
+    // Consume the integer part of the literal.
+    take(while: { $0.isDigit })
+    token.kind = .int
+
+    // Consume the decimal part of the literal, if any.
+    if peek() == "." {
+      index = source.index(after: index)
+      if take(while: { $0.isDigit }) != nil {
+        token.kind = .float
+      } else {
+        index = source.index(before: index)
+      }
+    }
+
+    // Consume an exponent, if any.
+    if (peek() == "e") || (peek() == "E") {
+      let i = index
+
+      index = source.index(after: index)
+      if (peek() == "+") || (peek() == "-") {
+        index = source.index(after: index)
+      }
+
+      if take(while: { $0.isDigit }) != nil {
+        token.kind = .float
+      } else {
+        index = i
+      }
+    }
+
+    token.range = token.range.lowerBound ..< index
   }
 
   /// Returns the next character in the stream, without consuming it.
