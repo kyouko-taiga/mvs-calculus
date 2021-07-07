@@ -1,0 +1,169 @@
+struct Vec3 {
+  var x: Float
+  var y: Float
+  var z: Float
+} in
+
+struct Body {
+  var r: Vec3
+  var v: Vec3
+  var m: Float
+  var d: Float
+} in
+
+fun advance(bodies: inout [Body], n: Int, dt: Float) -> Int {
+  // for i in 0 ..< n
+  fun loop0(bodies: inout [Body], dt: Float, i: Int, n: Int) -> Int {
+    if i >= n ? 0 ! (
+      // for j in (i + 1) ..< n
+      fun loop1(bodies: inout [Body], dt: Float, i: Int, j: Int, n: Int) -> Int {
+        if j >= n ? 0 ! (
+          let dx = bodies[i].r.x - bodies[j].r.x in
+          let dy = bodies[i].r.y - bodies[j].r.y in
+          let dz = bodies[i].r.z - bodies[j].r.z in
+
+          let dSquared  = dx * dx + dy * dy + dz * dz in
+          let magnitude = dt / (dSquared * sqrt(dSquared)) in
+
+          bodies[i].v.x = bodies[i].v.x - dx * bodies[j].m * magnitude in
+          bodies[i].v.y = bodies[i].v.y - dy * bodies[j].m * magnitude in
+          bodies[i].v.z = bodies[i].v.z - dz * bodies[j].m * magnitude in
+
+          bodies[j].v.x = bodies[j].v.x + dx * bodies[i].m * magnitude in
+          bodies[j].v.y = bodies[j].v.y + dy * bodies[i].m * magnitude in
+          bodies[j].v.z = bodies[j].v.z + dz * bodies[i].m * magnitude in
+
+          // j += 1
+          loop1(&bodies, dt, i, j + 1, n)
+        )
+      } in
+      _ = loop1(&bodies, dt, i, i + 1, n) in
+
+      // i += 1
+      loop0(&bodies, dt, i + 1, n)
+    )
+  } in
+  _ = loop0(&bodies, dt, 0, n) in
+
+  // for i in 0 ..< n
+  fun loop2(bodies: inout [Body], dt: Float, i: Int, n: Int) -> Int {
+    if i >= n ? 0 ! (
+      bodies[i].r.x = bodies[i].r.x + dt * bodies[i].v.x in
+      bodies[i].r.y = bodies[i].r.y + dt * bodies[i].v.y in
+      bodies[i].r.z = bodies[i].r.z + dt * bodies[i].v.z in
+
+      // i += 1
+      loop2(&bodies, dt, i + 1, n)
+    )
+  } in
+  loop2(&bodies, dt, 0, n)
+} in
+
+fun energy(bodies: [Body], n: Int) -> Float {
+  var e = 0.0 in
+
+  // for i in 0 ..< n
+  fun loop0(bodies: [Body], e: inout Float, i: Int, n: Int) -> Float {
+    if i >= n ? e ! (
+      e = e + 0.5 * bodies[i].m * (
+        bodies[i].v.x * bodies[i].v.x +
+        bodies[i].v.y * bodies[i].v.y +
+        bodies[i].v.z * bodies[i].v.z) in
+
+      // for j in (i + 1) ..< n
+      fun loop1(bodies: [Body], e: inout Float, i: Int, j: Int, n: Int) -> Float {
+        if j >= n ? e ! (
+          let dx = bodies[i].r.x - bodies[j].r.x in
+          let dy = bodies[i].r.y - bodies[j].r.y in
+          let dz = bodies[i].r.z - bodies[j].r.z in
+
+          let distance = sqrt(dx * dx + dy * dy + dz * dz) in
+          e = e - (bodies[i].m * bodies[j].m) / distance in
+
+          // j += 1
+          loop1(bodies, &e, i, j + 1, n)
+        )
+      } in
+      _ = loop1(bodies, &e, i, i + 1, n) in
+
+      // i += 1
+      loop0(bodies, &e, i + 1, n)
+    )
+  } in
+  loop0(bodies, &e, 0, n)
+} in
+
+let pi          = 3.1415926535897931 in
+let planetCount = 5 in
+let solarMass   = 4.0 * pi * pi in
+let daysPerYear = 365.24 in
+
+let sun = Body(
+  Vec3(0.0, 0.0, 0.0),
+  Vec3(0.0, 0.0, 0.0),
+  solarMass,
+  0.0) in
+
+let jupiter = Body(
+  Vec3(4.8414314424647209, -1.16032004402742839, -0.103622044471123109),
+  Vec3( 1.66007664274403694e-03 * daysPerYear,
+        7.69901118419740425e-03 * daysPerYear,
+       -6.90460016972063023e-05 * daysPerYear),
+  9.54791938424326609e-04 * solarMass,
+  0.0) in
+
+let saturn = Body(
+  Vec3(8.34336671824457987, 4.12479856412430479, -4.03523417114321381e-01),
+  Vec3(-2.76742510726862411e-03 * daysPerYear,
+        4.99852801234917238e-03 * daysPerYear,
+        2.30417297573763929e-05 * daysPerYear),
+  2.85885980666130812e-04 * solarMass,
+  0.0) in
+
+let uranus = Body(
+  Vec3(1.28943695621391310e+01, -1.51111514016986312e+01, -2.23307578892655734e-01),
+  Vec3( 2.96460137564761618e-03 * daysPerYear,
+        2.37847173959480950e-03 * daysPerYear,
+       -2.96589568540237556e-05 * daysPerYear),
+  4.36624404335156298e-05 * solarMass,
+  0.0) in
+
+let neptune = Body(
+  Vec3(1.53796971148509165e+01, -2.59193146099879641e+01, 1.79258772950371181e-01),
+  Vec3( 2.68067772490389322e-03  * daysPerYear,
+        1.62824170038242295e-03  * daysPerYear,
+       -9.51592254519715870e-05 * daysPerYear),
+  5.15138902046611451e-05 * solarMass,
+  0.0) in
+
+var bodies = [sun, jupiter, saturn, uranus, neptune] in
+
+// Adjust the momentum of the sun.
+var p = Vec3(0.0, 0.0, 0.0) in
+fun loop(bodies: inout [Body], p: inout Vec3, i: Int, n: Int) -> Int {
+  if i >= n ? 0 ! (
+    p.x = p.x + bodies[i].v.x * bodies[i].m in
+    p.y = p.y + bodies[i].v.y * bodies[i].m in
+    p.z = p.z + bodies[i].v.z * bodies[i].m in
+
+    // i += 1
+    loop(&bodies, &p, i + 1, n)
+  )
+} in
+_ = loop(&bodies, &p, 0, planetCount) in
+
+bodies[0].v = Vec3(
+  0.0 - p.x / solarMass,
+  0.0 - p.y / solarMass,
+  0.0 - p.z / solarMass) in
+
+// for i in 0 ..< N
+fun loop(bodies: inout [Body], planetCount: Int, i: Int, n: Int) -> Int {
+  if i >= n ? 0 ! (
+    _ = advance(&bodies, planetCount, 0.01) in
+    // i += 1
+    loop(&bodies, planetCount, i + 1, n)
+  )
+} in
+_ = loop(&bodies, planetCount, 0, 50000000) in
+energy(bodies, planetCount)
