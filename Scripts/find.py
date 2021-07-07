@@ -4,6 +4,10 @@ import gen
 import shutil as sh
 import hashlib
 
+from gen import ROOT_DIR
+
+FAIL_DIR = os.path.join(ROOT_DIR, 'fail')
+
 
 def hash(s):
   h = hashlib.new('sha256')
@@ -21,7 +25,7 @@ def main(i: int):
       except Exception as e:
         print(f'- recording a failure: {e}')
         h = hash(open(f'gen{i}.mvs').read().encode('utf-8'))
-        sh.copyfile(f'gen{i}.mvs', f'fail/{h}.mvs')
+        sh.copyfile(f'gen{i}.mvs', f'{FAIL_DIR}/{h}.mvs')
     except:
       print('- generator crash')
 

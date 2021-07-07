@@ -7,7 +7,10 @@ import json
 import itertools
 import pathlib
 
+from gen import ROOT_DIR, SRC_DIR
+
 RUN_COUNT = 20
+OUT_DIR = os.path.join(ROOT_DIR, 'out')
 
 
 def mkdir(path):
@@ -31,47 +34,44 @@ def main():
 
   def bench_swift():
     print('-- swift')
-    subp.run(['swiftc', 'output/gen.swift', '-o', 'output/gen.swift.out'],
+    subp.run(['swiftc', f'{SRC_DIR}/gen.swift', '-o', f'{OUT_DIR}/gen.swift.out'],
              stderr=subp.PIPE, stdout=subp.PIPE, check=True)
-    return collect_runs_p50('./output/gen.swift.out')
+    return collect_runs_p50(f'./{OUT_DIR}/gen.swift.out')
 
   def bench_cpp():
     print('-- cpp')
-    subp.run(['clang++', '-O2', 'output/gen.cpp', '-o', 'output/gen.cpp.out'],
+    subp.run(['clang++', '-std=c++14', '-O2', f'{SRC_DIR}/gen.cpp', '-o', f'{OUT_DIR}/gen.cpp.out'],
              stderr=subp.PIPE, stdout=subp.PIPE, check=True)
-    return collect_runs_p50('./output/gen.cpp.out')
+    return collect_runs_p50(f'./{OUT_DIR}/gen.cpp.out')
 
   def bench_mvs():
     print('-- mvs')
     compiled = subp.run(['.build/release/mvs',
-                         '--benchmark', '1000', 'output/gen.mvs'],
+                         '--benchmark', '1000', '-O', '--emit-llvm',
+                         f'{SRC_DIR}/gen.mvs'],
                         stderr=subp.PIPE, stdout=subp.PIPE, check=True)
-    with open("output/gen.mvs.ll", 'wb') as f:
+    with open(f'{OUT_DIR}/gen.mvs.ll', 'wb') as f:
       f.write(compiled.stderr)
-    subp.run(['clang', '-S', '-emit-llvm',
-              'Runtime/runtime.c', '-o', 'output/runtime.ll'],
+    subp.run(['clang++', '-std=c++14', '-O2',
+              f'{OUT_DIR}/gen.mvs.ll', 'Runtime/runtime.cc',
+              '-o', f'{OUT_DIR}/gen.mvs.out'],
              stderr=subp.PIPE, stdout=subp.PIPE, check=True)
-    subp.run(['clang++', '-O2',
-              'output/gen.mvs.ll',
-              'output/runtime.ll',
-              'Runtime/clock.cc',
-              '-o', 'output/gen.mvs.out'],
-             stderr=subp.PIPE, stdout=subp.PIPE, check=True)
-    return collect_runs_p50('./output/gen.mvs.out')
+    return collect_runs_p50(f'./{OUT_DIR}/gen.mvs.out')
 
   def bench_scala():
     print('-- scala')
-    mkdir('output/src/main/scala')
-    sh.move('output/gen.scala', 'output/src/main/scala/gen.scala')
-    subp.run(['sbt', 'nativeLink'], cwd='output/')
-    return collect_runs_p50('./output/target/scala-2.12/gen-out')
+    mkdir(f'{SRC_DIR}/main/scala')
+    sh.move(f'{SRC_DIR}/gen.scala', f'{SRC_DIR}/main/scala/gen.scala')
+    subp.run(['sbt', 'nativeLink'], cwd=f'{ROOT_DIR}/')
+    return collect_runs_p50(f'./{ROOT_DIR}/target/scala-2.12/gen-out')
 
-  if not os.path.exists("output"):
-    os.mkdir("output")
-  with open('output/results.csv', 'w') as f:
+  if not os.path.exists(OUT_DIR):
+    os.makedirs(OUT_DIR)
+
+  with open(f'{ROOT_DIR}/results.csv', 'w') as f:
     f.write('cpp,swift,mvs,scala\n')
     for i in itertools.count(start=1):
-      print(f"--- bench {i}")
+      print(f'--- bench {i}')
       try:
         gen.main(f'gen')
         try:
@@ -79,7 +79,7 @@ def main():
           cpp_result = bench_cpp()
           mvs_result = bench_mvs()
           scala_result = bench_scala()
-          f.write(f"{cpp_result},{swift_result},{mvs_result},{scala_result}\n")
+          f.write(f'{cpp_result},{swift_result},{mvs_result},{scala_result}\n')
           f.flush()
         except Exception as e:
           print(f'- bench failure: {e}')
@@ -87,5 +87,5 @@ def main():
         print(f'- generator failure: {e}')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
   main()

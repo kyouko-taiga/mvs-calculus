@@ -9,6 +9,9 @@ import gen_print_swift
 import gen_print_cpp
 import gen_print_scala
 
+ROOT_DIR = 'Benchmarking'
+SRC_DIR = os.path.join(ROOT_DIR, 'src')
+
 inst_weights = {
     CallInst: 160,
     BinaryInst: 80,
@@ -19,14 +22,18 @@ inst_weights = {
     NewStructInst: 20,
     StructGetInst: 200,
 }
+
 floating_type_weights = {
     FloatType: 1,
 }
+
 aggregate_type_weights = {
     ArrayType: 20,
     StructType: 20,
 }
+
 type_weights = {**floating_type_weights, **aggregate_type_weights}
+
 param_count_weights = {
     1: 100,
     2: 80,
@@ -37,6 +44,7 @@ param_count_weights = {
     7: 3,
     8: 1,
 }
+
 property_count_weights = {
     1: 40,
     2: 1000,
@@ -47,6 +55,7 @@ property_count_weights = {
     7: 5,
     8: 5,
 }
+
 return_offset_weights = {
     -1: 100,
     -2: 50,
@@ -57,7 +66,6 @@ return_offset_weights = {
     -7: 2,
     -8: 1,
 }
-
 
 op_limit = 5000
 inst_min = 8
@@ -482,15 +490,15 @@ def main(prefix):
   program = None
   while program is None:
     program = validate_program(gen_program())
-  if not os.path.exists("output"):
-    os.mkdir("output")
-  with open(f"output/{prefix}.swift", "w") as f:
+  if not os.path.exists(SRC_DIR):
+    os.makedirs(SRC_DIR)
+  with open(f"{SRC_DIR}/{prefix}.swift", "w") as f:
     gen_print_swift.print_program(f, "Gen", program, "swift")
-  with open(f"output/{prefix}.mvs", "w") as f:
+  with open(f"{SRC_DIR}/{prefix}.mvs", "w") as f:
     gen_print_swift.print_program(f, "Gen", program, "mvs")
-  with open(f"output/{prefix}.cpp", "w") as f:
+  with open(f"{SRC_DIR}/{prefix}.cpp", "w") as f:
     gen_print_cpp.print_program(f, program)
-  with open(f"output/{prefix}.scala", "w") as f:
+  with open(f"{SRC_DIR}/{prefix}.scala", "w") as f:
     gen_print_scala.print_program(f, program)
 
 
