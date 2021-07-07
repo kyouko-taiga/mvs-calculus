@@ -1,4 +1,4 @@
-from gen_ir import *
+from .ir import *
 
 
 def type_str(ty):

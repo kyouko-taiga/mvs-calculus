@@ -1,4 +1,4 @@
-from gen_ir import *
+from .ir import *
 
 
 def type_str(ty):
@@ -64,7 +64,7 @@ def print_struct(f, struct):
   f.write("  struct {} {{\n".format(name.str))
   for (n, prop) in enumerate(ty.properties):
     f.write("    {} p{};\n".format(type_str(prop), n))
-  params = ", ".join("{} {}".format(type_str(p), f"v{i}") 
+  params = ", ".join("{} {}".format(type_str(p), f"v{i}")
                      for i, p in enumerate(ty.properties))
   init_params = ", ".join("p{}(v{})".format(i, i)
                           for i, _ in enumerate(ty.properties))
@@ -89,7 +89,7 @@ def print_program(f, program):
   init_values = initial_values(params)
   invoke_args = ["v" + str(n) for n, _ in enumerate(init_values)]
   input_args = ("{}: {}".format(p.str, v) for (p, v) in zip(params, init_values))
-  grad_args = ("input.{}".format(p.str) for p in params) 
+  grad_args = ("input.{}".format(p.str) for p in params)
 
   f.write('  {} benchmark() {{\n'.format(type_str(entry.name.ty)))
   for (n, (p, v)) in enumerate(zip(params, init_values)):
@@ -124,4 +124,3 @@ def print_value(value):
     return "{ " + ", ".join(print_value(v) for v in value) + " }"
   else:
     assert False, "unknown value: " + str(value)
-

@@ -1,6 +1,6 @@
 import multiprocessing as mp
 import subprocess as subp
-import gen
+import generator
 import shutil as sh
 import hashlib
 

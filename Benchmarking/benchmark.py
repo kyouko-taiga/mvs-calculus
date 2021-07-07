@@ -1,13 +1,13 @@
 import os
 import subprocess as subp
-import gen
+import generator
 import shutil as sh
 import numpy as np
 import json
 import itertools
 import pathlib
 
-from gen import ROOT_DIR, SRC_DIR
+from generator import ROOT_DIR, SRC_DIR
 
 RUN_COUNT = 20
 OUT_DIR = os.path.join(ROOT_DIR, 'out')
@@ -73,7 +73,7 @@ def main():
     for i in itertools.count(start=1):
       print(f'--- bench {i}')
       try:
-        gen.main(f'gen')
+        generator.main(f'gen')
         try:
           swift_result = bench_swift()
           cpp_result = bench_cpp()

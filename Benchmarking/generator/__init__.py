@@ -3,11 +3,13 @@ import os
 import sys
 import random as rand
 import itertools
+
 from collections import namedtuple, defaultdict
-from gen_ir import *
-import gen_print_swift
-import gen_print_cpp
-import gen_print_scala
+
+from .ir import *
+from .cpp import print_program as print_cpp
+from .swift import print_program as print_swift
+from .scala import print_program as print_scala
 
 ROOT_DIR = 'Benchmarking'
 SRC_DIR = os.path.join(ROOT_DIR, 'src')
@@ -493,13 +495,13 @@ def main(prefix):
   if not os.path.exists(SRC_DIR):
     os.makedirs(SRC_DIR)
   with open(f"{SRC_DIR}/{prefix}.swift", "w") as f:
-    gen_print_swift.print_program(f, "Gen", program, "swift")
+    print_swift(f, "Gen", program, "swift")
   with open(f"{SRC_DIR}/{prefix}.mvs", "w") as f:
-    gen_print_swift.print_program(f, "Gen", program, "mvs")
+    print_swift(f, "Gen", program, "mvs")
   with open(f"{SRC_DIR}/{prefix}.cpp", "w") as f:
-    gen_print_cpp.print_program(f, program)
+    print_cpp(f, program)
   with open(f"{SRC_DIR}/{prefix}.scala", "w") as f:
-    gen_print_scala.print_program(f, program)
+    print_scala(f, program)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-from gen_ir import *
+from .ir import *
 
 
 def print_inst(f, inst, dialect):
@@ -23,10 +23,10 @@ def print_inst(f, inst, dialect):
     f.write("    let {}: {} = {}[{}]".format(inst.name.str, inst.name.ty, inst.arr.str, inst.index))
   elif isinstance(inst, NewStructInst):
     if dialect == 'swift':
-      args = ", ".join("p{}: {}".format(n, v.str) 
+      args = ", ".join("p{}: {}".format(n, v.str)
                        for (n, v) in enumerate(inst.values))
     elif dialect == 'mvs':
-      args = ", ".join("{}".format(v.str) 
+      args = ", ".join("{}".format(v.str)
                        for v in inst.values)
     f.write("    let {}: {} = {}({})".format(inst.name.str, inst.name.ty, inst.name.ty, args))
   elif isinstance(inst, StructGetInst):
@@ -45,7 +45,7 @@ def print_func(f, func, dialect):
     if func.name.str == "f0":
       func_name = 'noinline_' + func_name
   param_pre = '_ ' if dialect == 'swift' else ''
-  params = ["{}{}: {}".format(param_pre, param.str, param.ty) 
+  params = ["{}{}: {}".format(param_pre, param.str, param.ty)
             for param in func.params]
   param_types = [str(param.ty) for param in func.params]
   all_params = ", ".join(params)
@@ -85,7 +85,7 @@ def print_program(f, name, program, dialect):
   init_values = initial_values(params)
   invoke_args = ["v" + str(n) for n, _ in enumerate(init_values)]
   input_args = ("{}: {}".format(p.str, v) for (p, v) in zip(params, init_values))
-  grad_args = ("input.{}".format(p.str) for p in params) 
+  grad_args = ("input.{}".format(p.str) for p in params)
 
   if dialect == 'swift':
     f.write('  func main() -> {} {{\n'.format(entry.name.ty))
@@ -136,4 +136,3 @@ def print_value(value, dialect):
     return "[" + ", ".join(print_value(v, dialect) for v in value) + "]"
   else:
     assert False, "unknown value: " + str(value)
-
