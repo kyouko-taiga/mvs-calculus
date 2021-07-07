@@ -551,13 +551,25 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
   // T-BindingRef.
   public mutating func visit(path: inout NamePath) -> PathResult {
+    defer { expectedType = nil }
+
+    // Check for user-defined symbols.
     if let pair = gamma[path.name] {
       path.type = pair.type
       path.mutability = pair.mutability
-    } else if path.name == "uptime" {
+    }
+
+    // Check for built-in symbols.
+    else if path.name == "uptime" {
       path.type = .func(params: [], output: .float)
       path.mutability = .let
-    } else {
+    } else if path.name == "sqrt" {
+      path.type = .func(params: [.float], output: .float)
+      path.mutability = .let
+    }
+
+    // Handle errors.
+    else {
       if path.name == "_" {
         diagConsumer.consume(.invalidUseOfUnderscore(range: path.range))
       } else {
