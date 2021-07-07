@@ -10,3 +10,15 @@
 
 # Project-specific settings
 /Playground/**
+
+# Fuzzing & benchmarking
+__pycache__/
+Benchmarking/src/
+Benchmarking/out/
+Benchmarking/*.csv
+
+# Scala
+target/
+lib_managed/
+project/boot/
+project/plugins/project/
