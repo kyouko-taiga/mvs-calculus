@@ -182,9 +182,17 @@ public struct Emitter: ExprVisitor, PathVisitor {
     // Expose built-in functions.
     var uptime = builder.addFunction("_uptime", type: buildFunctionType(from: [], to: .float))
     uptime.linkage = .private
+    uptime.addAttribute(.alwaysinline, to: .function)
     builder.positionAtEnd(of: uptime.appendBasicBlock(named: "entry"))
     builder.buildRet(builder.buildCall(runtime.uptimeNanoseconds, args: []))
     bindings["uptime"] = uptime
+
+    var sqrt = builder.addFunction("_sqrt", type: buildFunctionType(from: [.float], to: .float))
+    sqrt.linkage = .private
+    sqrt.addAttribute(.alwaysinline, to: .function)
+    builder.positionAtEnd(of: sqrt.appendBasicBlock(named: "entry"))
+    builder.buildRet(builder.buildCall(runtime.sqrt, args: [sqrt.parameters[0]]))
+    bindings["sqrt"] = sqrt
 
     // Emit the program.
     let main  = builder.addFunction("main", type: FunctionType([], IntType.int32))

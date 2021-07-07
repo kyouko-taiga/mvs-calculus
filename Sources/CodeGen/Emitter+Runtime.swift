@@ -135,6 +135,18 @@ struct Runtime {
     return fn
   }
 
+  /// The runtime's `sqrt` function.
+  var sqrt: Function {
+    if let fn = emitter.module.function(named: "mvs_sqrt") {
+      return fn
+    }
+
+    let ty = FunctionType([FloatType.double], FloatType.double)
+    let fn = emitter.builder.addFunction("mvs_sqrt", type: ty)
+    fn.addAttribute(.nounwind , to: .function)
+    return fn
+  }
+
   /// The runtime's `uptime_nanoseconds()` function.
   var uptimeNanoseconds: Function {
     if let fn = emitter.module.function(named: "mvs_uptime_nanoseconds") {

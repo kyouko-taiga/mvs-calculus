@@ -1,5 +1,6 @@
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -263,6 +264,11 @@ int64_t mvs_array_equal(const mvs_AnyArray* lhs,
     }
   }
   return 1;
+}
+
+/// Returns the square root of the specified number.
+double mvs_sqrt(double x) {
+  return sqrt(x);
 }
 
 /// Returns the number of nanoseconds since boot, excluding any time the system spent asleep.
