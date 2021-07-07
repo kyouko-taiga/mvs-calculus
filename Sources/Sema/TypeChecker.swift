@@ -494,16 +494,18 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   }
 
   public mutating func visit(_ expr: inout NamePath) -> Bool {
+    defer { expectedType = nil }
+
     // Save the expected type, if any.
-    let expected = expectedType
+    let expectedExprType = expectedType
 
     // Type check the path.
     let (_, type) = expr.accept(pathVisitor: &self)
 
     // Make sure the type we inferred is the same type as what was expected.
-    guard (expected == nil) || (expected == expr.type) else {
+    guard (expectedExprType == nil) || (expectedExprType == expr.type) else {
       diagConsumer.consume(
-        .typeError(expected: expected!, actual: expr.type!, range: expr.range))
+        .typeError(expected: expectedExprType!, actual: expr.type!, range: expr.range))
       return false
     }
 
@@ -511,16 +513,18 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   }
 
   public mutating func visit(_ expr: inout PropPath) -> Bool {
+    defer { expectedType = nil }
+
     // Save the expected type, if any.
-    let expected = expectedType
+    let expectedExprType = expectedType
 
     // Type check the path.
     let (_, type) = expr.accept(pathVisitor: &self)
 
     // Make sure the type we inferred is the same type as what was expected.
-    guard (expected == nil) || (expected == expr.type) else {
+    guard (expectedExprType == nil) || (expectedExprType == expr.type) else {
       diagConsumer.consume(
-        .typeError(expected: expected!, actual: expr.type!, range: expr.range))
+        .typeError(expected: expectedExprType!, actual: expr.type!, range: expr.range))
       return false
     }
 
@@ -528,8 +532,10 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   }
 
   public mutating func visit(_ expr: inout ElemPath) -> Bool {
+    defer { expectedType = nil }
+
     // Save the expected type, if any.
-    let expected = expectedType
+    let expectedExprType = expectedType
 
     // Type check the path.
     let (_, type) = expr.accept(pathVisitor: &self)
@@ -541,9 +547,9 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     }
 
     // Make sure the type we inferred is the same type as what was expected.
-    guard (expected == nil) || (expected == expr.type) else {
+    guard (expectedExprType == nil) || (expectedExprType == expr.type) else {
       diagConsumer.consume(
-        .typeError(expected: expected!, actual: expr.type!, range: expr.range))
+        .typeError(expected: expectedExprType!, actual: expr.type!, range: expr.range))
       return false
     }
     return !type.hasError
@@ -585,6 +591,8 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
   // T-[Let|Var]ElemRef.
   public mutating func visit(path: inout ElemPath) -> PathResult {
+    defer { expectedType = nil }
+
     expectedType = expectedType.map({
       if case .inout(let baseType) = $0 {
         return .inout(base: .array(elem: baseType))
@@ -748,7 +756,6 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   private mutating func visit(bodyOf literal: inout FuncExpr) -> Bool {
     // Save the current typing context.
     let oldGamma = gamma
-    let expectedExprType = expectedType
     defer {
       gamma = oldGamma
       expectedType = nil
@@ -772,13 +779,6 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     guard case .func(params: _, let outputType) = literal.type else { unreachable() }
     expectedType = outputType
     let isWellTyped = literal.body.accept(&self)
-
-    // Make sure the type we inferred is the same type as what was expected.
-    guard (expectedExprType == nil) || (expectedExprType == literal.type) else {
-      diagConsumer.consume(
-        .typeError(expected: expectedExprType!, actual: literal.type!, range: literal.range))
-      return false
-    }
 
     return isWellTyped
   }
