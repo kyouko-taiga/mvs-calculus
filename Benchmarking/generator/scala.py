@@ -89,20 +89,15 @@ def print_program(f, program):
   input_args = ("{}: {}".format(p.str, v) for (p, v) in zip(params, init_values))
   grad_args = ("input.{}".format(p.str) for p in params)
 
-  f.write('  def main(): {} = {{\n'.format(type_str(entry.name.ty)))
-  for (n, (p, v)) in enumerate(zip(params, init_values)):
-    f.write('    val v{}: {} = {}'.format(n, type_str(p.ty), print_value(v)))
-    f.write('\n')
-  f.write('    return f0({})\n'.format(', '.join(invoke_args)))
-  f.write('  }\n')
-
   v = initial_values([entry.name])[0]
 
   f.write('  def benchmark(): Unit = {\n')
+  for (n, (p, v)) in enumerate(zip(params, init_values)):
+    f.write('    val v{}: {} = {}\n'.format(n, type_str(p.ty), print_value(v)))
   f.write('    val start = nanoTime()\n')
   f.write('    var result: {} = {}\n'.format(type_str(entry.name.ty), v))
   f.write('    (1 to 1000).foreach { _ =>\n')
-  f.write('      result = main()\n')
+  f.write('      result = f0({})\n'.format(', '.join(invoke_args)))
   f.write('    }\n')
   f.write('    val end = nanoTime()\n')
   f.write('    println(result)\n')

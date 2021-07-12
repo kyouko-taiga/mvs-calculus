@@ -95,20 +95,15 @@ def print_program(f, program):
   input_args = ("{}: {}".format(p.str, v) for (p, v) in zip(params, init_values))
   grad_args = ("input.{}".format(p.str) for p in params)
 
-  f.write('  {} benchmark() {{\n'.format(type_str(entry.name.ty)))
-  for (n, (p, v)) in enumerate(zip(params, init_values)):
-    f.write('    {} v{}({});'.format(type_str(p.ty), n, print_value(v)))
-    f.write('\n')
-  f.write('    return f0({});\n'.format(', '.join(invoke_args)))
-  f.write('  }\n')
-
   v = initial_values([entry.name])[0]
 
   f.write('  int main() {\n')
+  for (n, (p, v)) in enumerate(zip(params, init_values)):
+    f.write('    {} v{}({});\n'.format(type_str(p.ty), n, print_value(v)))
   f.write('    auto start = std::chrono::high_resolution_clock::now();\n')
   f.write('    {} result;\n'.format(type_str(entry.name.ty)))
   f.write('    for (int i = 0; i < 1000; i ++) {\n')
-  f.write('      result = benchmark();\n')
+  f.write('      result = f0({});\n'.format(', '.join(invoke_args)))
   f.write('    }\n')
   f.write('    auto end = std::chrono::high_resolution_clock::now();\n')
   f.write('    double value = *((double*) &result);\n')

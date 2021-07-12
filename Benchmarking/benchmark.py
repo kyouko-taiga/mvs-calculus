@@ -51,7 +51,7 @@ def bench_mvs(process_kwargs):
   print('## mvs')
   subp.run(
     [
-      '.build/release/mvs', '--benchmark', '1000', f'{SRC_DIR}/gen.mvs',
+      '.build/release/mvs', f'{SRC_DIR}/gen.mvs',
      '-o', f'{OUT_DIR}/gen.mvs.o'
     ],
     **process_kwargs)
