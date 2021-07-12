@@ -1,4 +1,3 @@
-import generator
 import itertools
 import numpy as np
 import os
@@ -6,7 +5,8 @@ import pathlib
 import shutil as sh
 import subprocess as subp
 
-from generator import ROOT_DIR, SRC_DIR
+from .generator import gen
+from .generator.gen import ROOT_DIR, SRC_DIR
 
 RUN_COUNT = 20
 OUT_DIR = os.path.join(ROOT_DIR, 'out')
@@ -18,8 +18,7 @@ def collect_runs_p50(binary):
 
   for x in range(RUN_COUNT):
     # Run the binary.
-    result = subp.run(
-      ['/usr/bin/time', '-l', binary], stderr=subp.PIPE, stdout=subp.PIPE, check=True)
+    result = subp.run([binary], stderr=subp.PIPE, stdout=subp.PIPE, check=True)
 
     # Parse the binary's output.
     lines = list(filter(lambda x: x, result.stdout.decode('utf-8').split('\n')))
@@ -29,7 +28,7 @@ def collect_runs_p50(binary):
 
     # Store results.
     exec_time.append(xtime)
-    memo_cons.append(float(result.stderr.splitlines()[1].split()[0]))  # Max resident set size
+    memo_cons.append(0)#float(result.stderr.splitlines()[1].split()[0]))  # Max resident set size
 
   print()
 
@@ -110,7 +109,7 @@ def main(verbose=False):
 
       # Generate a program.
       try:
-        generator.main(f'gen')
+        gen.main(f'gen')
       except Exception as e:
         print(f'Generator failed: {e}\n')
         continue

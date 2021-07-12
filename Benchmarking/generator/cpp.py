@@ -18,6 +18,10 @@ def print_inst(f, inst):
     return
   elif isinstance(inst, AssignInst):
     f.write("    {} = {};\n".format(inst.l.str, inst.r.str))
+  elif isinstance(inst, ArraySetInst):
+    f.write("    {}[{}] = {};\n".format(inst.arr.str, inst.index, inst.r.str))
+  elif isinstance(inst, StructSetInst):
+    f.write("    {}.p{} = {};\n".format(inst.struct.str, inst.index, inst.r.str))
   else:
     ty = type_str(inst.name.ty)
     if isinstance(inst, BinaryInst):
@@ -110,6 +114,7 @@ def print_program(f, program):
   f.write('    double value = *((double*) &result);\n')
   f.write('    std::cout << value << "\\n";\n')
   f.write('    std::cout << std::chrono::duration_cast<std::chrono::nanoseconds>(end-start).count();\n')
+  f.write('    std::cout << "\\n";\n')
   f.write('    return 0;\n')
   f.write('  }\n')
 

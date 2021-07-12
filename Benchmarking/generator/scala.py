@@ -18,6 +18,10 @@ def print_inst(f, inst):
     return
   elif isinstance(inst, AssignInst):
     f.write("    {} = {}\n".format(inst.l.str, inst.r.str))
+  elif isinstance(inst, ArraySetInst):
+    f.write("    {} = {}.updated({}, {})\n".format(inst.arr.str, inst.arr.str, inst.index, inst.r.str))
+  elif isinstance(inst, StructSetInst):
+    f.write("    {} = {}.copy(p{} = {})\n".format(inst.struct.str, inst.struct.str, inst.index, inst.r.str))
   else:
     ty = type_str(inst.name.ty)
     if isinstance(inst, BinaryInst):
