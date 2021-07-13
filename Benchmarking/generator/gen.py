@@ -314,12 +314,17 @@ def gen_inst(name_env, var_names, func_name, func_env, struct_env):
     raise Exception("Unknown instruction: {}".format(inst))
 
 
-def drop_unused_insts(func):
-  uses = dict()
-
+def compute_func_uses(func):
+  uses = compute_inst_uses(func.insts)
   for param in func.params:
     uses[param] = []
-  for inst in func.insts:
+  return uses
+
+
+def compute_inst_uses(insts):
+  uses = dict()
+
+  for inst in insts:
     if isinstance(inst, BinaryInst):
       uses[inst.name] = [inst.l, inst.r]
     elif isinstance(inst, ReturnInst):
@@ -345,6 +350,11 @@ def drop_unused_insts(func):
     else:
       raise Exception("Unknown instruction: {}".format(inst))
 
+  return uses
+
+
+def drop_unused_insts(func):
+  uses = compute_func_uses(func)
   used = set()
 
   def mark_used(name):
@@ -369,6 +379,19 @@ def drop_unused_insts(func):
 
   return Func(func.name, func.params, list(filter(is_used, func.insts)))
 
+
+def compute_inst_sizes(insts):
+  uses = compute_inst_uses(insts)
+  sizes = defaultdict(lambda: 1)
+
+  for inst in insts:
+    if hasattr(inst, "name"):
+      total_size = 1
+      for use in uses[inst.name]:
+        total_size += sizes[use]
+      sizes[inst.name] = total_size
+
+  return sizes
 
 def gen_func(func_name, func_env, struct_env):
   func_params = func_env[func_name]
@@ -395,7 +418,8 @@ def gen_func(func_name, func_env, struct_env):
       if isinstance(inst, VarInst):
         var_names.add(name)
 
-  inhabitants = sorted(gen_inhabitants(name_env, func_name.ty), key=lambda n: int(n.str[1:]))
+  sizes = compute_inst_sizes(func_insts)
+  inhabitants = sorted(gen_inhabitants(name_env, func_name.ty), key=lambda n: sizes[n])
   ret_offset = max(-len(inhabitants), weighted_pick(return_offset_weights))
   ret_value = inhabitants[ret_offset]
   func_insts.append(ReturnInst(ret_value))
