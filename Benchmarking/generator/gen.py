@@ -447,14 +447,17 @@ def validate_program(program):
   funcs = program.funcs
   func_map = { func.name: func for func in funcs }
   entry_name = funcs[0].name
-  op_count = 0
+  total_op_count = 0
+  op_count = defaultdict(lambda: 0)
   called_funcs = set()
   used_structs = set()
 
-  def count_op():
-    nonlocal op_count
-    op_count += 1
-    if op_count > op_limit:
+  def count_op(inst):
+    nonlocal total_op_count
+    op_name = inst.__class__.__name__
+    op_count[op_name] += 1
+    total_op_count += 1
+    if total_op_count > op_limit:
       raise TooManyOps()
 
   def interp_binary(op, l, r):
@@ -481,7 +484,7 @@ def validate_program(program):
     env = dict(zip(func.params, func_args))
 
     for inst in func.insts:
-      count_op()
+      count_op(inst)
       if isinstance(inst, BinaryInst):
         env[inst.name] = interp_binary(inst.op, env[inst.l], env[inst.r])
       elif isinstance(inst, ReturnInst):
@@ -527,10 +530,13 @@ def validate_program(program):
   mark_used_structs(entry_args)
   try:
     interp_call(entry_name, entry_args)
-    if op_count > 10:
+    if total_op_count > 10:
       new_funcs = [f for f in program.funcs if f.name in called_funcs]
       new_structs = [s for s in program.structs if s.name in used_structs]
-      return Program(funcs=new_funcs, structs=new_structs, meta={"op_count": op_count})
+      meta = {}
+      meta['op_count'] = op_count
+      meta['total_count'] = total_op_count
+      return Program(funcs=new_funcs, structs=new_structs, meta=meta)
     else:
       return None
   except ZeroDivisionError:
@@ -545,6 +551,8 @@ def main(prefix):
     program = validate_program(gen_program())
   if not os.path.exists(SRC_DIR):
     os.makedirs(SRC_DIR)
+  with open(f"{SRC_DIR}/{prefix}.json", "w") as f:
+    f.write(json.dumps(program.meta))
   with open(f"{SRC_DIR}/{prefix}.swift", "w") as f:
     print_swift(f, "Gen", program, "swift")
   with open(f"{SRC_DIR}/{prefix}.mvs", "w") as f:

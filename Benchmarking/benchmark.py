@@ -38,44 +38,44 @@ def collect_runs_p50(binary):
   return (x, y)
 
 
-def bench_cpp(process_kwargs):
+def bench_cpp(prefix, process_kwargs):
   print('## cpp')
   process_kwargs['timeout'] = 300
   subp.run(
-    ['clang++', '-std=c++14', '-O2', f'{SRC_DIR}/gen.cpp', '-o', f'{OUT_DIR}/gen.cpp.out'],
+    ['clang++', '-std=c++14', '-O2', f'{SRC_DIR}/{prefix}.cpp', '-o', f'{OUT_DIR}/{prefix}.cpp.out'],
     **process_kwargs)
-  return collect_runs_p50(f'./{OUT_DIR}/gen.cpp.out')
+  return collect_runs_p50(f'./{OUT_DIR}/{prefix}.cpp.out')
 
 
-def bench_mvs(process_kwargs):
+def bench_mvs(prefix, process_kwargs):
   print('## mvs')
   subp.run(
     [
-      '.build/release/mvs', f'{SRC_DIR}/gen.mvs',
-     '-o', f'{OUT_DIR}/gen.mvs.o'
+      '.build/release/mvs', f'{SRC_DIR}/{prefix}.mvs',
+     '-o', f'{OUT_DIR}/{prefix}.mvs.o'
     ],
     **process_kwargs)
   subp.run(
     [
-      'clang++', '-std=c++14', f'{OUT_DIR}/gen.mvs.o', 'Runtime/runtime.cc',
-      '-o', f'{OUT_DIR}/gen.mvs.out'
+      'clang++', '-std=c++14', f'{OUT_DIR}/{prefix}.mvs.o', 'Runtime/runtime.cc',
+      '-o', f'{OUT_DIR}/{prefix}.mvs.out'
     ],
     **process_kwargs)
-  return collect_runs_p50(f'./{OUT_DIR}/gen.mvs.out')
+  return collect_runs_p50(f'./{OUT_DIR}/{prefix}.mvs.out')
 
 
-def bench_swift(process_kwargs):
+def bench_swift(prefix, process_kwargs):
   print('## swift')
   subp.run(
-    ['swiftc', '-Ounchecked', f'{SRC_DIR}/gen.swift', '-o', f'{OUT_DIR}/gen.swift.out'],
+    ['swiftc', '-Ounchecked', f'{SRC_DIR}/{prefix}.swift', '-o', f'{OUT_DIR}/{prefix}.swift.out'],
     **process_kwargs)
-  return collect_runs_p50(f'./{OUT_DIR}/gen.swift.out')
+  return collect_runs_p50(f'./{OUT_DIR}/{prefix}.swift.out')
 
 
-def bench_scala(process_kwargs):
+def bench_scala(prefix, process_kwargs):
   print('## scala')
   os.makedirs(f'{SRC_DIR}/main/scala', exist_ok=True)
-  sh.move(f'{SRC_DIR}/gen.scala', f'{SRC_DIR}/main/scala/gen.scala')
+  sh.move(f'{SRC_DIR}/{prefix}.scala', f'{SRC_DIR}/main/scala/gen.scala')
   subp.run(
     ['sbt', 'nativeLink'], cwd=f'{ROOT_DIR}/',
     **process_kwargs)
@@ -106,20 +106,21 @@ def main(verbose=False):
 
     for i in itertools.count(start=1):
       print(f'# Benchmark {i}')
+      prefix = f'gen{i}'
 
       # Generate a program.
       try:
-        gen.main(f'gen')
+        gen.main(prefix)
       except Exception as e:
         print(f'Generator failed: {e}\n')
         continue
 
       # Compile and measure performances.
       try:
-        (cpp_time, cpp_memo) = bench_cpp(process_kwargs)
-        (mvs_time, mvs_memo) = bench_mvs(process_kwargs)
-        (swf_time, swf_memo) = bench_swift(process_kwargs)
-        (scl_time, scl_memo) = bench_scala(process_kwargs)
+        (cpp_time, cpp_memo) = bench_cpp(prefix, process_kwargs)
+        (mvs_time, mvs_memo) = bench_mvs(prefix, process_kwargs)
+        (swf_time, swf_memo) = bench_swift(prefix, process_kwargs)
+        (scl_time, scl_memo) = bench_scala(prefix, process_kwargs)
 
         f.write(f'{cpp_time},{cpp_memo},')
         f.write(f'{mvs_time},{mvs_memo},')
