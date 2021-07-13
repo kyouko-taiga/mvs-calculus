@@ -75,7 +75,7 @@ def bench_swift(prefix, process_kwargs):
 def bench_scala(prefix, process_kwargs):
   print('## scala')
   os.makedirs(f'{SRC_DIR}/main/scala', exist_ok=True)
-  sh.move(f'{SRC_DIR}/{prefix}.scala', f'{SRC_DIR}/main/scala/gen.scala')
+  sh.copyfile(f'{SRC_DIR}/{prefix}.scala', f'{SRC_DIR}/main/scala/gen.scala')
   subp.run(
     ['sbt', 'nativeLink'], cwd=f'{ROOT_DIR}/',
     **process_kwargs)
@@ -137,8 +137,8 @@ def main(verbose=False):
         f.write(f'{scl_time},{scl_memo}\n')
         f.flush()
       except Exception as e:
-        with open(f'{SRC_DIR}/{prefix}.fail', 'w'):
-          f.write("1")
+        with open(f'{SRC_DIR}/{prefix}.fail', 'w') as ffail:
+          ffail.write("1")
         print(f'Benchmark {prefix} failed: {e}\n')
 
 
