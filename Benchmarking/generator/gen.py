@@ -15,7 +15,7 @@ ROOT_DIR = 'Benchmarking'
 SRC_DIR = os.path.join(ROOT_DIR, 'src')
 
 inst_weights = {
-    CallInst: 1,
+    CallInst: 10,
     BinaryInst: 1,
     VarInst: 10,
     AssignInst: 1,
