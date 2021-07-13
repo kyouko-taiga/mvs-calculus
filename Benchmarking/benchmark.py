@@ -98,6 +98,7 @@ def main(verbose=False):
 
   # Run the benchmarks.
   with open(report_filename, 'w') as f:
+    f.write('bench-name,')
     f.write('cpp-time,cpp-memo,')
     f.write('mvs-time,mvs-memo,')
     f.write('swift-time,swift-memo,')
@@ -105,8 +106,10 @@ def main(verbose=False):
     f.flush()
 
     for i in itertools.count(start=1):
-      print(f'# Benchmark {i}')
       prefix = f'gen{i}'
+      if os.path.exists('{SRC_DIR}/{prefix}.json'):
+        continue
+      print(f'# Benchmarking {prefix}')
 
       # Generate a program.
       try:
@@ -122,6 +125,7 @@ def main(verbose=False):
         (swf_time, swf_memo) = bench_swift(prefix, process_kwargs)
         (scl_time, scl_memo) = bench_scala(prefix, process_kwargs)
 
+        f.write(f'{prefix},')
         f.write(f'{cpp_time},{cpp_memo},')
         f.write(f'{mvs_time},{mvs_memo},')
         f.write(f'{swf_time},{swf_memo},')
