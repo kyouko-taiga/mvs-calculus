@@ -588,4 +588,8 @@ def main(prefix):
 
 
 if __name__ == "__main__":
-  main('gen')
+  for i in itertools.count(start=1):
+    prefix = f'gen{i}'
+    if not os.path.exists(f'{SRC_DIR}/{prefix}.json'):
+      print(f"Generating {prefix}")
+      main(prefix)
