@@ -107,21 +107,26 @@ def main(verbose=False):
 
     for i in itertools.count(start=1):
       prefix = f'gen{i}'
-      if os.path.exists('{SRC_DIR}/{prefix}.json'):
-        continue
-      print(f'# Benchmarking {prefix}')
 
-      # Generate a program.
-      try:
-        gen.main(prefix)
-      except Exception as e:
-        print(f'Generator failed: {e}\n')
+      # Skip previously failed benchmarks.
+      if os.path.exists(f'{SRC_DIR}/{prefix}.fail'):
+        print(f'# Skipping failing benchmark {prefix}')
         continue
+      else:
+        print(f'# Benchmarking {prefix}')
+
+      # Generate a program if it wasn't generated earlier.
+      if not os.path.exists(f'{SRC_DIR}/{prefix}.json'):
+        try:
+          gen.main(prefix)
+        except Exception as e:
+          print(f'Generator failed: {e}\n')
+          continue
 
       # Compile and measure performances.
       try:
-        (cpp_time, cpp_memo) = bench_cpp(prefix, process_kwargs)
         (mvs_time, mvs_memo) = bench_mvs(prefix, process_kwargs)
+        (cpp_time, cpp_memo) = bench_cpp(prefix, process_kwargs)
         (swf_time, swf_memo) = bench_swift(prefix, process_kwargs)
         (scl_time, scl_memo) = bench_scala(prefix, process_kwargs)
 
@@ -132,7 +137,9 @@ def main(verbose=False):
         f.write(f'{scl_time},{scl_memo}\n')
         f.flush()
       except Exception as e:
-        print(f'Benchmark failed: {e}\n')
+        with open(f'{SRC_DIR}/{prefix}.fail', 'w'):
+          f.write("1")
+        print(f'Benchmark {prefix} failed: {e}\n')
 
 
 if __name__ == '__main__':
