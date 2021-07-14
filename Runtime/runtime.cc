@@ -1,10 +1,17 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#ifdef DEBUG
+#define mvs_assert(c) (assert(c))
+#else
+#define mvs_assert(c) ;
+#endif
 
 extern "C" {
 
@@ -78,7 +85,14 @@ inline ArrayHeader* get_array_header(mvs_AnyArray* array) {
 extern "C" {
 
 void* mvs_malloc(int64_t size) {
-  return malloc(size);
+  void* ptr = malloc(size);
+#ifdef DEBUG
+  if (ptr == nullptr) {
+    fprintf(stderr, "'malloc' failed to allocate %lli bytes (error %i)\n", size, errno);
+    exit(-1);
+  }
+#endif
+  return ptr;
 }
 
 void mvs_free(void* ptr) {
@@ -103,7 +117,7 @@ void mvs_array_init(mvs_AnyArray* array,
   if (count > 0) {
     // Allocate new storage.
     int64_t capacity = count * size;
-    auto* storage = malloc(sizeof(ArrayHeader) + capacity);
+    auto* storage = mvs_malloc(sizeof(ArrayHeader) + capacity);
     array->payload = (uint8_t*)storage + sizeof(ArrayHeader);
 
 #ifdef DEBUG
@@ -111,7 +125,7 @@ void mvs_array_init(mvs_AnyArray* array,
 #endif
 
     // Configure the storage's header.
-    ArrayHeader* header = (ArrayHeader*)storage;
+    auto* header = (ArrayHeader*)storage;
     header->refc     = 1;
     header->count    = count;
     header->capacity = capacity;
@@ -128,6 +142,8 @@ void mvs_array_init(mvs_AnyArray* array,
   } else {
     array->payload = nullptr;
   }
+
+  mvs_assert((array->payload) || (count == 0));
 }
 
 /// Destroys an array reference, deallocating memory as necessary.
@@ -143,6 +159,7 @@ void mvs_array_drop(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
   // Bail out if the array storage is not allocated.
   auto* header = get_array_header(array);
   if (header == nullptr) { return; }
+  mvs_assert(header->count > 0);
 
   // Decrement the reference counter.
   auto value = header->refc.fetch_sub(1, std::memory_order_acq_rel);
@@ -154,6 +171,10 @@ void mvs_array_drop(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
 #endif
     return;
   }
+
+#ifdef DEBUG
+  fprintf(stderr, "  drop    %p\n", header);
+#endif
 
   // If the reference counter reached zero, we must deallocate the storage.
   if (elem_type->drop != nullptr) {
@@ -167,7 +188,7 @@ void mvs_array_drop(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
   fprintf(stderr, "  dealloc %p\n", header);
 #endif
 
-  free(header);
+  mvs_free(header);
   array->payload = nullptr;
 }
 
@@ -187,6 +208,7 @@ void mvs_array_copy(mvs_AnyArray* dst, mvs_AnyArray* src) {
   // Increment the reference counter.
   auto* header = get_array_header(src);
   if (header == nullptr) { return; }
+  mvs_assert(header->count > 0);
 
   auto value = header->refc.fetch_add(1, std::memory_order_relaxed);
 #ifdef DEBUG
@@ -207,16 +229,25 @@ void mvs_array_uniq(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
   // If the array's already unique, we're done.
   auto* header = get_array_header(array);
   if ((header == nullptr) || (header->refc.load(std::memory_order_acquire) == 1)) { return; }
+  mvs_assert(header->count > 0);
 
   // Allocate a new storage.
-  void* unique_storage = malloc(sizeof(ArrayHeader) + header->capacity);
+  void* unique_storage = mvs_malloc(sizeof(ArrayHeader) + header->capacity);
 #ifdef DEBUG
   fprintf(stderr, "  alloc %lu+%lli bytes at %p\n", sizeof(ArrayHeader), header->capacity, unique_storage);
 #endif
 
+  auto* new_header  = (ArrayHeader*)unique_storage;
+  auto* new_payload = (uint8_t*)unique_storage + sizeof(ArrayHeader);
+
+  // Initialize the new header.
+  new_header->refc     = 1;
+  new_header->count    = header->count;
+  new_header->capacity = header->capacity;
+
   // Copy the contents of the current storage.
-  if (elem_type->copy == NULL) {
-    memcpy(unique_storage, header, sizeof(ArrayHeader) + header->capacity);
+  if (elem_type->copy == nullptr) {
+    memcpy(new_payload, array->payload, header->capacity);
   } else {
     uint8_t* src = (uint8_t*)array->payload;
     uint8_t* dst = (uint8_t*)unique_storage + sizeof(ArrayHeader);
@@ -225,13 +256,9 @@ void mvs_array_uniq(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
     }
   }
 
-  // Decrement the reference counter on the old storage.
-  header->refc.fetch_sub(1, std::memory_order_acq_rel);
-
-  // Substitute the old array's storage.
-  ArrayHeader* new_header = (ArrayHeader*)unique_storage;
-  new_header->refc = 1;
+  // Substitute the old array's storage and decrement the reference counter on the old storage.
   array->payload = (uint8_t*)unique_storage + sizeof(ArrayHeader);
+  header->refc.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 /// Returns whether the two given arrays are equal, assuming they are of the same type.
