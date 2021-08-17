@@ -2,21 +2,23 @@ from collections import namedtuple
 
 
 Program = namedtuple("Program", ["structs", "funcs", "meta"])
-Func = namedtuple("Func", ["name", "params", "insts"]) 
+Func = namedtuple("Func", ["name", "params", "insts"])
 Struct = namedtuple("Struct", ["name", "ty"])
 Name = namedtuple("Name", ["str", "ty"])
 
 
-BinaryInst = namedtuple("BinaryInst", ["name", "l", "op", "r"]) 
+BinaryInst = namedtuple("BinaryInst", ["name", "l", "op", "r"])
 BinaryOps = ["+", "-", "*", "/"]
-ReturnInst = namedtuple("ReturnInst", ["name"]) 
+ReturnInst = namedtuple("ReturnInst", ["name"])
 CallInst = namedtuple("CallInst", ["name", "func_name", "args"])
 VarInst = namedtuple("VarInst", ["name", "r"])
 AssignInst = namedtuple("AssignInst", ["l", "r"])
 NewArrayInst = namedtuple("NewArrayInst", ["name", "elements"])
 ArrayGetInst = namedtuple("ArrayGetInst", ["name", "arr", "index"])
+ArraySetInst = namedtuple("ArraySetInst", ["arr", "index", "r"])
 NewStructInst = namedtuple("NewStructInst", ["name", "values"])
 StructGetInst = namedtuple("StructGetInst", ["name", "struct", "index"])
+StructSetInst = namedtuple("StructSetInst", ["struct", "index", "r"])
 
 
 FloatingType = namedtuple("FloatingType", ["name"])
@@ -24,7 +26,7 @@ FloatingType.__str__ = lambda self: self.name
 FloatType = FloatingType("Float")
 ArrayType = namedtuple("ArrayType", ["element", "length"])
 ArrayType.__str__ = lambda self: "[{}]".format(self.element)
-StructType = namedtuple("StructType", ["name", "properties"]) 
+StructType = namedtuple("StructType", ["name", "properties"])
 StructType.__str__ = lambda self: self.name.str
 
 
@@ -36,6 +38,8 @@ class StructValue:
     return f"StructValue({self.name}, {self.values})"
   def __getitem__(self, index):
     return self.values[index]
+  def __setitem__(self, index, value):
+    self.values[index] = value
 
 
 def initial_values(params):

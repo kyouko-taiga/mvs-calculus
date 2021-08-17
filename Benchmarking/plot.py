@@ -4,25 +4,25 @@ import os
 import pandas
 import sys
 
-from generator import ROOT_DIR
+from .generator.gen import ROOT_DIR
 from scipy import stats
 
 input = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT_DIR, 'results.csv')
 data  = pandas.read_csv(input)
 
-exec_time = data.drop(['cpp-memo', 'mvs-memo', 'swift-memo', 'scala-memo'], axis=1)
+exec_time = data.drop(['bench-name', 'cpp-memo', 'mvs-memo', 'swift-memo', 'scala-memo'], axis=1)
 exec_time = exec_time.div(1000000)
-memo_cons = data.drop(['cpp-time', 'mvs-time', 'swift-time', 'scala-time'], axis=1)
+memo_cons = data.drop(['bench-name', 'cpp-time', 'mvs-time', 'swift-time', 'scala-time'], axis=1)
 memo_cons = memo_cons.div(1000000)
 
-# Remove outliers.
-indices = []
-for _ in range(0, 2):
-  scores = stats.zscore(exec_time)
-  scores = np.abs(scores)
-  indices = (scores < 1).all(axis=1)
-  exec_time = exec_time[indices]
-  memo_cons = memo_cons[indices]
+# # Remove outliers.
+# indices = []
+# for _ in range(0, 2):
+#   scores = stats.zscore(exec_time)
+#   scores = np.abs(scores)
+#   indices = (scores < 1).all(axis=1)
+#   exec_time = exec_time[indices]
+#   memo_cons = memo_cons[indices]
 
 args = dict(patch_artist=True, boxprops=dict(facecolor='#ffe5cc'))
 
