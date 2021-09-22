@@ -55,7 +55,7 @@ struct Runtime {
     return emitter.builder.addFunction("mvs_print_f64", type: ty)
   }
 
-  /// The runtime's `array_init(array, elem_type, count, size)` function.
+  /// The runtime's `array_init(array, elem_type, count, stride)` function.
   var arrayInit: Function {
     if let fn = emitter.module.function(named: "mvs_array_init") {
       return fn

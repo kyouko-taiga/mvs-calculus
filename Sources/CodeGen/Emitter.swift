@@ -69,7 +69,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return builder.createStruct(
       name : "_Metatype",
       types: [
-        // The size (a.k.a. stride) of the type.
+        // The size of the type.
         IntType.int64,
         // The type-erased zero-inititiazer for instances of the type.
         anyInitFuncType.ptr,

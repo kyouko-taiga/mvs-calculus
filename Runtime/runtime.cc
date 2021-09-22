@@ -18,7 +18,7 @@ extern "C" {
 /// A metatype.
 struct mvs_MetaType {
 
-  /// The size (a.k.a. stride) of the type.
+  /// The size of the type.
   const int64_t size;
 
   /// The type-erased zero-inititiazer for instances of the type.
@@ -105,20 +105,20 @@ void mvs_free(void* ptr) {
 ///   - array: A pointer an uninitialized array structure.
 ///   - elem_type: A pointer to the metatype of the type of the array's elements.
 ///   - count: The number of elements in the array.
-///   - size: The size of each element, in bytes.
+///   - stride: The stride of each element, in bytes.
 void mvs_array_init(mvs_AnyArray* array,
                     const mvs_MetaType* elem_type,
                     int64_t count,
-                    int64_t size) {
+                    int64_t stride) {
 #ifdef DEBUG
-  fprintf(stderr, "mvs_array_init(%p, %p, %lli, %lli)\n", array, elem_type, count, size);
+  fprintf(stderr, "mvs_array_init(%p, %p, %lli, %lli)\n", array, elem_type, count, stride);
 #endif
 
   if (count > 0) {
     // Allocate new storage.
-    int64_t capacity = count * size;
+    int64_t capacity = count * stride;
     auto* storage = mvs_malloc(sizeof(ArrayHeader) + capacity);
-    array->payload = (uint8_t*)storage + sizeof(ArrayHeader);
+    array->payload = storage + sizeof(ArrayHeader);
 
 #ifdef DEBUG
     fprintf(stderr, "  alloc %lu+%lli bytes at %p\n", sizeof(ArrayHeader), capacity, storage);
@@ -134,7 +134,7 @@ void mvs_array_init(mvs_AnyArray* array,
     uint8_t* payload = (uint8_t*)array->payload;
     if (elem_type->init != nullptr) {
       for (size_t i = 0; i < count; ++i) {
-        elem_type->init(&payload[i * size]);
+        elem_type->init(&payload[i * stride]);
       }
     } else {
       memset(payload, 0, capacity);
