@@ -105,7 +105,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return type
   }
 
-  /// Returns the (lowered) type of a type-erased array.
+  /// The (lowered) type of a type-erased array.
   var anyArrayType: StructType {
     if let type = module.type(named: "_AnyArray") {
       return type as! StructType
@@ -309,7 +309,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
     builder.buildRet(zext(builder.buildICmp(lhs, rhs, .equal)))
 
     var metatype = builder.addGlobal(
-      "_Int.Type", initializer: metatypeType.constant(
+      "_Int.Type",
+      initializer: metatypeType.constant(
         values: [
           stride(of: IntType.int64),
           anyInitFuncType.ptr.null(),
@@ -347,7 +348,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
     builder.buildRet(zext(builder.buildFCmp(lhs, rhs, .orderedEqual)))
 
     var metatype = builder.addGlobal(
-      "_Float.Type", initializer: metatypeType.constant(
+      "_Float.Type",
+      initializer: metatypeType.constant(
         values: [
           stride(of: IntType.int64),
           anyInitFuncType.ptr.null(),
@@ -427,14 +429,9 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
     // Create the metatype.
     var metatype = builder.addGlobal(
-      "_AnyClosure.Type", initializer: metatypeType.constant(
-        values: [
-          stride(of: anyClosureType),
-          initFn,
-          dropFn,
-          copyFn,
-          equalFn,
-        ]))
+      "_AnyClosure.Type",
+      initializer: metatypeType.constant(
+        values: [stride(of: anyClosureType), initFn, dropFn, copyFn, equalFn]))
     metatype.linkage = .private
     return metatype
   }
@@ -482,28 +479,29 @@ public struct Emitter: ExprVisitor, PathVisitor {
     builder.buildRetVoid()
 
     // Create the type's equality function.
-    var equalityFn = builder.addFunction("\(decl.name).te_equal", type: anyEqualityFuncType)
-    equalityFn.linkage = .private
-    equalityFn.addAttribute(.alwaysinline , to: .function)
+    var equalFn = builder.addFunction("\(decl.name).te_equal", type: anyEqualityFuncType)
+    equalFn.linkage = .private
+    equalFn.addAttribute(.alwaysinline , to: .function)
 
-    builder.positionAtEnd(of: equalityFn.appendBasicBlock(named: "entry"))
+    builder.positionAtEnd(of: equalFn.appendBasicBlock(named: "entry"))
     builder.buildRet(
       builder.buildCall(
         emit(equalityFuncFor: decl, irType: irType),
         args: [
-          builder.buildBitCast(equalityFn.parameters[0], type: irType.ptr),
-          builder.buildBitCast(equalityFn.parameters[1], type: irType.ptr)
+          builder.buildBitCast(equalFn.parameters[0], type: irType.ptr),
+          builder.buildBitCast(equalFn.parameters[1], type: irType.ptr)
         ]))
 
     // Create the metatype.
     var metatype = builder.addGlobal(
-      "\(decl.name).Type", initializer: metatypeType.constant(
+      "\(decl.name).Type",
+      initializer: metatypeType.constant(
         values: [
           stride(of: irType),
           initFn ?? anyInitFuncType.ptr.null(),
           dropFn ?? anyDropFuncType.ptr.null(),
           copyFn,
-          equalityFn,
+          equalFn,
         ]))
     metatype.linkage = .private
     return metatype
@@ -548,7 +546,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     // Create the type's copy function.
-    let copyFn = builder.addFunction("\(prefix).te_copy", type: anyCopyFuncType)
+    var copyFn = builder.addFunction("\(prefix).te_copy", type: anyCopyFuncType)
+    copyFn.linkage = .private
     copyFn.addAttribute(.alwaysinline , to: .function)
     do {
       builder.positionAtEnd(of: copyFn.appendBasicBlock(named: "entry"))
@@ -558,16 +557,23 @@ public struct Emitter: ExprVisitor, PathVisitor {
       builder.buildRetVoid()
     }
 
+    // Create the type's equality function.
+    var equalFn = builder.addFunction("\(prefix).te_equal", type: anyEqualityFuncType)
+    equalFn.linkage = .private
+    equalFn.addAttribute(.alwaysinline , to: .function)
+    do {
+      builder.positionAtEnd(of: equalFn.appendBasicBlock(named: "entry"))
+      let lhs = builder.buildBitCast(equalFn.parameters[0], type: anyArrayType.ptr)
+      let rhs = builder.buildBitCast(equalFn.parameters[1], type: anyArrayType.ptr)
+      let eq = emitAreEqual(lhs: lhs, rhs: rhs, type: .array(elem: elemType))
+      builder.buildRet(zext(eq))
+    }
+
     // Create the metatype.
     var metatype = builder.addGlobal(
-      "\(prefix).Type", initializer: metatypeType.constant(
-        values: [
-          stride(of: anyArrayType),
-          initFn,
-          dropFn,
-          copyFn,
-          anyEqualityFuncType.ptr.null(),
-        ]))
+      "\(prefix).Type",
+      initializer: metatypeType.constant(
+        values: [stride(of: anyArrayType), initFn, dropFn, copyFn, equalFn]))
     metatype.linkage = .private
     return metatype
   }
@@ -1104,11 +1110,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
     case .func:
       let lhs = builder.buildBitCast(lhs, type: anyClosureType.ptr)
       let rhs = builder.buildBitCast(rhs, type: anyClosureType.ptr)
-      let equalityFn = builder.buildLoad(
+      let fun = builder.buildLoad(
         builder.buildStructGEP(lhs, type: anyClosureType, index: 4),
         type: FunctionType([anyClosureType.ptr, anyClosureType.ptr], IntType.int64).ptr)
 
-      let eq = builder.buildCall(equalityFn, args: [lhs, rhs])
+      let eq = builder.buildCall(fun, args: [lhs, rhs])
       return builder.buildTrunc(eq, type: IntType.int1)
 
     default:
