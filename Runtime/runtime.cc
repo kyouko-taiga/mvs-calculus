@@ -37,7 +37,7 @@ struct mvs_MetaType {
   const void (*copy)(void*, void*);
 
   /// The type-erased equality function for instances of the type.
-  const int64_t (*equal)(void*, void*);
+  const int64_t (*equal)(const void*, const void*);
 
 };
 
@@ -84,8 +84,8 @@ inline ArrayHeader* get_array_header(mvs_AnyArray* array) {
 
 extern "C" {
 
-void* mvs_malloc(int64_t size) {
-  void* ptr = malloc(size);
+uint8_t* mvs_malloc(int64_t size) {
+  uint8_t* ptr = (uint8_t*)malloc(size);
 #ifdef DEBUG
   if (ptr == nullptr) {
     fprintf(stderr, "'malloc' failed to allocate %lli bytes (error %i)\n", size, errno);
@@ -232,7 +232,7 @@ void mvs_array_uniq(mvs_AnyArray* array, const mvs_MetaType* elem_type) {
   mvs_assert(header->count > 0);
 
   // Allocate a new storage.
-  void* unique_storage = mvs_malloc(sizeof(ArrayHeader) + header->capacity);
+  auto unique_storage = mvs_malloc(sizeof(ArrayHeader) + header->capacity);
 #ifdef DEBUG
   fprintf(stderr, "  alloc %lu+%lli bytes at %p\n", sizeof(ArrayHeader), header->capacity, unique_storage);
 #endif
@@ -284,8 +284,8 @@ int64_t mvs_array_equal(const mvs_AnyArray* lhs,
   uint8_t* lhs_payload = (uint8_t*)lhs->payload;
   uint8_t* rhs_payload = (uint8_t*)rhs->payload;
   for (int64_t i = 0; i < lhs_header->count; ++i) {
-    void* a = &lhs_payload[i * elem_type->size];
-    void* b = &rhs_payload[i * elem_type->size];
+    uint8_t* a = &lhs_payload[i * elem_type->size];
+    uint8_t* b = &rhs_payload[i * elem_type->size];
     if (elem_type->equal(a, b) == 0) {
       return 0;
     }
