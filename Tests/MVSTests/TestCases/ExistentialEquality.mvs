@@ -1,0 +1,11 @@
+struct AnyPair {
+  var fst: Any
+  var snd: Any
+} in
+let a = AnyPair(1 as Any, 1.0 as Any) in
+let b = AnyPair(a as Any, a as Any) in
+let c = [[b as Any], [b as Any]] in
+let d = c as Any in
+let e = [d, d] in
+
+e[0] == e[1] // #!output 1

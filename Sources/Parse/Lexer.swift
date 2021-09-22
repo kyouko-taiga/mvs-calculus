@@ -41,6 +41,7 @@ struct Lexer: IteratorProtocol {
 
       switch word {
       case "_"      : token.kind = .under
+      case "as"     : token.kind = .as
       case "if"     : token.kind = .if
       case "in"     : token.kind = .in
       case "let"    : token.kind = .let

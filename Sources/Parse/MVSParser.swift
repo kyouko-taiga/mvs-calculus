@@ -89,7 +89,7 @@ public struct MVSParser {
   /// `( 'let' | 'var' ) name ( ':' sign )?`
   lazy var bindingDecl = bindingDeclHead
     .then((take(.colon) << sign.catch(errorHandler(ErrorSign.init))).optional)
-    .map({ (tree) -> BindingDecl in
+    .map({ tree -> BindingDecl in
       let ((head, name), sign) = tree
       return BindingDecl(
         mutability: head.kind == .let ? .let : .var,
@@ -150,13 +150,23 @@ public struct MVSParser {
 
   let expr = ForwardParser<Expr, ParserState>()
 
-  lazy var cmpExpr = addExpr
-    .then(cmpOperExpr.then(addExpr).many)
+  lazy var cmpExpr = castExpr
+    .then(cmpOperExpr.then(castExpr).many)
     .map({ (head, tail) -> Expr in
       tail.reduce(into: head, { (lhs, pair) in
         let (oper, rhs) = pair
         lhs = InfixExpr(lhs: lhs, rhs: rhs, oper: oper, range: lhs.range ..< rhs.range)
       })
+    })
+
+  lazy var castExpr = addExpr
+    .then((take(.as) << sign).optional)
+    .map({ (value, sign) -> Expr in
+      if let sign = sign {
+        return CastExpr(value: value, sign: sign, range: value.range ..< sign.range)
+      } else {
+        return value
+      }
     })
 
   lazy var addExpr = mulExpr
@@ -302,7 +312,7 @@ public struct MVSParser {
   lazy var arrayExpr = take(.lBracket)
     .then(exprList.optional)
     .then(take(.rBracket))
-    .map({ (tree) -> Expr in
+    .map({ tree -> Expr in
       let ((head, elems), tail) = tree
       return ArrayExpr(elems: elems ?? [], range: head.range ..< head.range)
     })
@@ -335,7 +345,7 @@ public struct MVSParser {
     .then(((take(.rParen) << take(.arrow)) << sign) >> take(.lBrace))
     .then(expr)
     .then(take(.rBrace))
-    .map({ (tree) -> Expr in
+    .map({ tree -> Expr in
       let ((((head, params), output), body), tail) = tree
       return FuncExpr(
         params: params ?? [],
@@ -354,7 +364,7 @@ public struct MVSParser {
     .then(expr)
     .then(take(.query) << expr)
     .then(take(.bang) << expr)
-    .map({ (tree) -> Expr in
+    .map({ tree -> Expr in
       let (((head, cond), succ), fail) = tree
       return CondExpr(
         cond: cond,
@@ -388,14 +398,14 @@ public struct MVSParser {
   lazy var arraySign = take(.lBracket)
     .then(sign)
     .then(take(.rBracket))
-    .map({ (tree) -> Sign in
+    .map({ tree -> Sign in
       let ((head, base), tail) = tree
       return ArraySign(base: base, range: head.range ..< tail.range)
     })
 
   lazy var funcSign = ((take(.lParen) ++ signList.optional) >> take(.rParen))
     .then(take(.arrow) << sign)
-    .map({ (tree) -> Sign in
+    .map({ tree -> Sign in
       let ((head, params), output) = tree
       return FuncSign(
         params: params ?? [],

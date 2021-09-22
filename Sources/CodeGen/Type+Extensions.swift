@@ -19,7 +19,7 @@ extension Type {
       return true
     case .struct(name: _, let props):
       return props.allSatisfy({ $0.type.isTrivial })
-    case .array, .func:
+    case .array, .func, .any:
       return false
     }
   }
@@ -29,6 +29,7 @@ extension Type {
     switch self {
     case .int   : return "I"
     case .float : return "F"
+    case .any   : return "A"
     case .error : return "E"
 
     case .inout(let base):

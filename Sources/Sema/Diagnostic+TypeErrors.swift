@@ -112,4 +112,12 @@ extension Diagnostic {
       message: "undefined type: '\(name)'")
   }
 
+  static func invalidConversion(
+    from lhs: Type, to rhs: Type, range: SourceRange
+  ) -> Diagnostic {
+    return Diagnostic(
+      range: range,
+      message: "conversion from type '\(lhs)' to type '\(rhs)' will always fail")
+  }
+
 }

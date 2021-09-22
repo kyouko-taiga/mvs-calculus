@@ -21,6 +21,9 @@ public indirect enum Type: Hashable {
   /// An `inout` type.
   case `inout`(base: Type)
 
+  /// The built-in top type (a.k.a. `Any`).
+  case any
+
   /// The type of an ill-typed AST node.
   case error
 
@@ -81,6 +84,7 @@ extension Type: CustomStringConvertible {
     case .struct(let name, _) : return name
     case .array(let elem)     : return "[\(elem)]"
     case .inout(let base)     : return "&\(base)"
+    case .any                 : return "Any"
     case .error               : return "<error>"
 
     case .func(let params, let output):

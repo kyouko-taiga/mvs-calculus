@@ -93,6 +93,10 @@ struct ArrayEscapeAnalzyer: ExprVisitor {
         || expr.fail.accept(&self)
   }
 
+  mutating func visit(_ expr: inout CastExpr) -> Bool {
+    return expr.value.accept(&self)
+  }
+
   mutating func visit(_ expr: inout ErrorExpr) -> Bool {
     return false
   }

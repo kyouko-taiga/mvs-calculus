@@ -58,6 +58,17 @@ struct mvs_AnyArray {
 
 };
 
+/// An existential container.
+struct mvs_Existential {
+
+  /// The container's inline storage.
+  int64_t storage[3];
+
+  // The value witness.
+  mvs_MetaType* witness;
+
+};
+
 }
 
 /// The header of an array.
@@ -291,6 +302,94 @@ int64_t mvs_array_equal(const mvs_AnyArray* lhs,
     }
   }
   return 1;
+}
+
+/// Destroys an existential container, including out-of-line storage, if any.
+///
+/// - Parameter container: A pointer to the container that should be destroyed.
+void mvs_exist_drop(mvs_Existential* container) {
+#ifdef DEBUG
+  fprintf(stderr, "mvs_exist_drop(%p)\n", container);
+#endif
+  if (container->witness->size <= sizeof(int64_t) * 3) {
+    // Storage is inline.
+    if (container->witness->drop != nullptr) {
+      container->witness->drop(reinterpret_cast<uint8_t*>(container->storage));
+    }
+  } else {
+    // Storage is out-of-line.
+    auto storage = reinterpret_cast<uint8_t**>(container->storage)[0];
+    if (container->witness->drop != nullptr) {
+      container->witness->drop(storage);
+    }
+    mvs_free(storage);
+#ifdef DEBUG
+    fprintf(stderr, "  dealloc %p\n", storage);
+#endif
+  }
+
+  memset(container, 0, sizeof(mvs_Existential));
+}
+
+/// Copies an existential container.
+///
+/// - Parameters:
+///   - dst: A pointer to the destination container.
+///   - src: A pointer to the source container.
+void mvs_exist_copy(mvs_Existential* dst, mvs_Existential* src) {
+#ifdef DEBUG
+  fprintf(stderr, "mvs_exist_copy(%p, %p)\n", dst, src);
+#endif
+
+  // Copy the witness.
+  dst->witness = src->witness;
+
+  // Prepare the destination's storage.
+  uint8_t* srcStorage = nullptr;
+  uint8_t* dstStorage = nullptr;
+  if (src->witness->size <= sizeof(int64_t) * 3) {
+    // Storage is inline.
+    srcStorage = reinterpret_cast<uint8_t*>(src->storage);
+    dstStorage = reinterpret_cast<uint8_t*>(dst->storage);
+  } else {
+    // Storage is out-of-line.
+    srcStorage = *(reinterpret_cast<uint8_t**>(src->storage));
+    dstStorage = mvs_malloc(src->witness->size);
+    reinterpret_cast<uint8_t**>(dst->storage)[0] = dstStorage;
+
+#ifdef DEBUG
+    fprintf(stderr, "  alloc %lli bytes at %p\n", src->witness->size, dstStorage);
+#endif
+  }
+
+  // Copy the contents of the source container.
+  if (src->witness->copy == nullptr) {
+    memcpy(dstStorage, srcStorage, src->witness->size);
+  } else {
+    src->witness->copy(dstStorage, srcStorage);
+  }
+}
+
+/// Returns whether the two given existential containers are equal.
+///
+/// - Parameters:
+///   - lhs: A container.
+///   - rhs: Another container.
+int64_t mvs_exist_equal(const mvs_Existential* lhs, const mvs_Existential* rhs) {
+  // Clearly false if the container don't have the same witness.
+  if (lhs->witness != rhs->witness) { return 0; }
+
+  if (lhs->witness->size <= sizeof(int64_t) * 3) {
+    // Storage is inline.
+    auto a = reinterpret_cast<const uint8_t*>(lhs->storage);
+    auto b = reinterpret_cast<const uint8_t*>(rhs->storage);
+    return lhs->witness->equal(a, b);
+  } else {
+    // Storage is out-of-line.
+    auto a = reinterpret_cast<uint8_t* const*>(lhs->storage)[0];
+    auto b = reinterpret_cast<uint8_t* const*>(rhs->storage)[0];
+    return lhs->witness->equal(a, b);
+  }
 }
 
 /// Returns the square root of the specified number.

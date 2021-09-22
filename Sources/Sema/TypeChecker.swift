@@ -489,6 +489,39 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     return isWellTyped
   }
 
+  public mutating func visit(_ expr: inout CastExpr) -> Bool {
+    // Realize the type of the signature.
+    let type = expr.sign.accept(&self)
+    expr.type = type
+
+    // Save the expected type, if any.
+    let expectedExprType = expectedType
+
+    // Type check the value.
+    expectedType = nil
+    let isWellTyped = expr.value.accept(&self)
+
+    // The type of the value and/or that of the signature should be `Any`, or both should be the
+    // exact same type. Other conversions are ill-typed.
+    if expr.value.type != expr.sign.type {
+      if expr.value.type != .any && expr.sign.type != .any {
+        expr.type = .error
+        diagConsumer.consume(
+          .invalidConversion(from: expr.value.type!, to: expr.sign.type!, range: expr.range))
+        return false
+      }
+    }
+
+    // Make sure the type we inferred from the signature is the same type as what was expected.
+    guard (expectedExprType == nil) || (expectedExprType == expr.type) else {
+      diagConsumer.consume(
+        .typeError(expected: expectedExprType!, actual: expr.type!, range: expr.range))
+      return false
+    }
+
+    return isWellTyped
+  }
+
   public mutating func visit(_ expr: inout ErrorExpr) -> Bool {
     return false
   }
@@ -687,6 +720,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // Check for built-in names.
     switch sign.name {
+    case "Any"  : sign.type = .any
     case "Int"  : sign.type = .int
     case "Float": sign.type = .float
     default:
@@ -698,7 +732,8 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   }
 
   public mutating func visit(_ sign: inout ArraySign) -> Type {
-    return .array(elem: sign.base.accept(&self))
+    sign.type = .array(elem: sign.base.accept(&self))
+    return sign.type!
   }
 
   public mutating func visit(_ sign: inout FuncSign) -> Type {
@@ -708,11 +743,13 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     }
     let outputType = sign.output.accept(&self)
 
-    return .func(params: paramTypes, output: outputType)
+    sign.type = .func(params: paramTypes, output: outputType)
+    return sign.type!
   }
 
   public mutating func visit(_ sign: inout InoutSign) -> Type {
-    return .inout(base: sign.base.accept(&self))
+    sign.type = .inout(base: sign.base.accept(&self))
+    return sign.type!
   }
 
   public mutating func visit(_ sign: inout ErrorSign) -> Type {

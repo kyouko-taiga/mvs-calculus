@@ -12,7 +12,7 @@ let package = Package(
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser.git", from: "0.4.0"),
     .package(url: "https://github.com/kyouko-taiga/Diesel.git", from: "1.1.0"),
-    .package(name: "LLVM", url: "https://github.com/llvm-swift/LLVMSwift.git", .branch("master")),
+    .package(name: "LLVM", url: "https://github.com/kyouko-taiga/LLVMSwift.git", .branch("master")),
   ],
   targets: [
     .target(

@@ -406,6 +406,31 @@ public struct CondExpr: Expr {
 
 }
 
+/// A cast expression.
+public struct CastExpr: Expr {
+
+  public var range: SourceRange
+
+  public var type: Type?
+
+  /// The value being cast.
+  public var value: Expr
+
+  /// The signature of the type to which the value is being cast.
+  public var sign: Sign
+
+  public init(value: Expr, sign: Sign, range: SourceRange) {
+    self.value = value
+    self.sign = sign
+    self.range = range
+  }
+
+  public mutating func accept<V>(_ visitor: inout V) -> V.ExprResult where V: ExprVisitor {
+    visitor.visit(&self)
+  }
+
+}
+
 /// An ill-formed expression that results from a failed attempt to type check the program.
 public struct ErrorExpr: Expr {
 

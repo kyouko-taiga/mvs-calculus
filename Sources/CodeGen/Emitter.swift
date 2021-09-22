@@ -82,6 +82,28 @@ public struct Emitter: ExprVisitor, PathVisitor {
       ])
   }
 
+  /// The (lowered) type of an existential container.
+  var existentialType: StructType {
+    if let type = module.type(named: "_Existential") {
+      return type as! StructType
+    }
+
+    let type = builder.createStruct(name: "_Existential")
+    type.setBody([
+      // The container's inline storage.
+      ArrayType(elementType: IntType.int64, count: 3),
+      // The value witness.
+      metatypeType.ptr,
+    ])
+
+    return type
+  }
+
+  /// The size of an existential container's inline storage.
+  var existentialInlineSize: Size {
+    return target.dataLayout.storeSize(of: VectorType(elementType: IntType.int64, count: 3))
+  }
+
   /// The (lowered) type of a type-erased closure.
   var anyClosureType: StructType {
     if let type = module.type(named: "_AnyClosure") {
@@ -160,8 +182,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
   ///   - program: The program for which LLVM IR is generated.
   ///   - name: The name of the module (default: `main`).
   public mutating func emit(program: inout Program, name: String = "main") throws -> Module {
-    builder   = IRBuilder(module: Module(name: name))
-    bindings  = [:]
+    builder = IRBuilder(module: Module(name: name))
+    bindings = [:]
     metatypes = [:]
     module.targetTriple = target.triple
 
@@ -357,6 +379,74 @@ public struct Emitter: ExprVisitor, PathVisitor {
           anyCopyFuncType.ptr.null(),
           equalFn,
         ]))
+    metatype.linkage = .private
+    return metatype
+  }
+
+  /// The metatype of the built-in `Any` type.
+  private var existentialMetatype: Global {
+    // Check if we already build this metatype.
+    if let global = module.global(named: "_Existential.Type") {
+      return global
+    }
+
+    // Save the builder's current insertion block to restore at the end.
+    let oldInsertBlock = builder.insertBlock
+    defer { oldInsertBlock.map(builder.positionAtEnd(of:)) }
+
+    // Create the type's zero-initializer.
+    var initFn = builder.addFunction("_Existential.te_init", type: anyInitFuncType)
+    initFn.linkage = .private
+    initFn.addAttribute(.alwaysinline , to: .function)
+    do {
+      builder.positionAtEnd(of: initFn.appendBasicBlock(named: "entry"))
+      let size = stride(of: existentialType)
+      _ = builder.buildCall(
+        memset,
+        args: [initFn.parameters[0], IntType.int8.constant(0), size, IntType.int1.constant(0)])
+      builder.buildRetVoid()
+    }
+
+    // Create the type's destructor.
+    var dropFn = builder.addFunction("_Existential.te_drop", type: anyDropFuncType)
+    dropFn.linkage = .private
+    dropFn.addAttribute(.alwaysinline , to: .function)
+    do {
+      builder.positionAtEnd(of: dropFn.appendBasicBlock(named: "entry"))
+      let receiver = builder.buildBitCast(dropFn.parameters[0], type: existentialType.ptr)
+      _ = builder.buildCall(runtime.existDrop, args: [receiver])
+      builder.buildRetVoid()
+    }
+
+    // Create the type's copy function.
+    var copyFn = builder.addFunction("_Existential.te_copy", type: anyCopyFuncType)
+    copyFn.linkage = .private
+    copyFn.addAttribute(.alwaysinline , to: .function)
+    do {
+      builder.positionAtEnd(of: copyFn.appendBasicBlock(named: "entry"))
+      let lhs = builder.buildBitCast(copyFn.parameters[0], type: existentialType.ptr)
+      let rhs = builder.buildBitCast(copyFn.parameters[1], type: existentialType.ptr)
+      emit(copy: rhs, type: .any, to: lhs)
+      builder.buildRetVoid()
+    }
+
+    // Create the type's equality function.
+    var equalFn = builder.addFunction("_Existential.te_equal", type: anyEqualityFuncType)
+    equalFn.linkage = .private
+    equalFn.addAttribute(.alwaysinline , to: .function)
+    do {
+      builder.positionAtEnd(of: equalFn.appendBasicBlock(named: "entry"))
+      let lhs = builder.buildBitCast(equalFn.parameters[0], type: existentialType.ptr)
+      let rhs = builder.buildBitCast(equalFn.parameters[1], type: existentialType.ptr)
+      let res = emitAreEqual(lhs: lhs, rhs: rhs, type: .any)
+      builder.buildRet(zext(res))
+    }
+
+    // Create the metatype.
+    var metatype = builder.addGlobal(
+      "_Existential.Type",
+      initializer: metatypeType.constant(
+        values: [stride(of: anyClosureType), initFn, dropFn, copyFn, equalFn]))
     metatype.linkage = .private
     return metatype
   }
@@ -999,6 +1089,9 @@ public struct Emitter: ExprVisitor, PathVisitor {
     case .func:
       emit(dropClosure: val)
 
+    case .any:
+      _ = builder.buildCall(runtime.existDrop, args: [val])
+
     default:
       assert(type.isTrivial, "missing drop handler for non-trivial type")
     }
@@ -1044,7 +1137,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
       _ = builder.buildCall(copyFn, args: [loc, val])
 
-    default:
+    case .any:
+      _ = builder.buildCall(runtime.existCopy, args: [loc, val])
+
+    case .inout, .error:
       unreachable()
     }
   }
@@ -1117,7 +1213,11 @@ public struct Emitter: ExprVisitor, PathVisitor {
       let eq = builder.buildCall(fun, args: [lhs, rhs])
       return builder.buildTrunc(eq, type: IntType.int1)
 
-    default:
+    case .any:
+      let eq = builder.buildCall(runtime.existEqual, args: [lhs, rhs])
+      return builder.buildTrunc(eq, type: IntType.int1)
+
+    case .inout, .error:
       unreachable()
     }
   }
@@ -1672,6 +1772,87 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
   }
 
+  public mutating func visit(_ expr: inout CastExpr) -> ExprResult {
+    // If both the value and the signature have the same type, there's nothing to do.
+    if expr.value.type == expr.sign.type {
+      return expr.value.accept(&self)
+    }
+
+    // If the signature is `Any`, the value is concrete andmust be wrapped into an existential
+    // container. Otherwise, the value is a container from which we must unwrap a concrete value.
+    if expr.sign.type == .any {
+      let witnessIRType = lower(expr.value.type!)
+      let witnessSize = target.dataLayout.storeSize(of: witnessIRType)
+      let container = addEntryAlloca(type: existentialType)
+
+      // Store the value witness.
+      builder.buildStore(
+        metatype(of: expr.value.type!),
+        to: builder.buildStructGEP(container, type: existentialType, index: 1))
+
+      // Store the value inline if possible; otherwise, allocate out-of-line storage.
+      if witnessSize <= existentialInlineSize {
+        let loc = builder.buildBitCast(
+          builder.buildStructGEP(container, type: existentialType, index: 0),
+          type: witnessIRType.ptr)
+        emit(copy: &expr.value, to: loc)
+      } else {
+        var storage: IRValue = builder.buildCall(runtime.malloc, args: [i64(witnessSize)])
+        storage = builder.buildBitCast(storage, type: witnessIRType.ptr)
+        emit(copy: &expr.value, to: storage)
+
+        let loc = builder.buildBitCast(
+          builder.buildStructGEP(container, type: existentialType, index: 0),
+          type: witnessIRType.ptr.ptr)
+        builder.buildStore(storage, to: loc)
+      }
+
+      return container
+    } else {
+      let witnessIRType = lower(expr.sign.type!)
+      let witnessSize = target.dataLayout.storeSize(of: witnessIRType)
+
+      // Emitting the container will create a new allocation that must be deinitialized once we've
+      // extracted the wrapped value.
+      let container = expr.value.accept(&self)
+
+      // FIXME: Avoid copying l-values
+      // If the container is bound to an l-value, then we could get and copy its contents directly
+      // rather than copying the container itself.
+
+      // Copy the value from the container.
+      let storage: IRValue
+      if witnessSize <= existentialInlineSize {
+        storage = builder.buildBitCast(
+          builder.buildStructGEP(container, type: existentialType, index: 0),
+          type: witnessIRType.ptr)
+      } else {
+        let loc = builder.buildBitCast(
+          builder.buildStructGEP(container, type: existentialType, index: 0),
+          type: witnessIRType.ptr.ptr)
+        storage = builder.buildLoad(loc, type: witnessIRType.ptr)
+      }
+
+      let value: IRValue
+      if expr.sign.type!.isAddressOnly {
+        // Move the wrapped value out of the container.
+        value = addEntryAlloca(type: witnessIRType)
+        emit(move: storage, type: expr.sign.type!, to: value)
+      } else {
+        // The wrapped value doesn't need non-trivial deinitialization.
+        assert(expr.sign.type!.isTrivial)
+        value = builder.buildLoad(storage, type: witnessIRType)
+      }
+
+      // Deallocate out-of-line storage if necessary.
+      if witnessSize > existentialInlineSize {
+        _ = builder.buildCall(runtime.free, args: [builder.buildBitCast(storage, type: voidPtr)])
+      }
+
+      return value
+    }
+  }
+
   public mutating func visit(_ expr: inout ErrorExpr) -> IRValue {
     fatalError()
   }
@@ -1874,6 +2055,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
       return lower(base).ptr
     case .func:
       return anyClosureType
+    case .any:
+      return existentialType
     case .error:
       fatalError("cannot lower type the error type to LLVM")
     }
@@ -1894,7 +2077,9 @@ public struct Emitter: ExprVisitor, PathVisitor {
       return emit(metatypeForArrayOf: elemType)
     case .func:
       return closureMetatype
-    default:
+    case .any:
+      return existentialMetatype
+    case .inout, .error:
       unreachable()
     }
   }
@@ -2020,7 +2205,12 @@ public struct Emitter: ExprVisitor, PathVisitor {
   }
 
   /// Returns a constant of type `i64`.
-  private func i64(_ value: Int) -> IRValue {
+  private func i64<Z>(_ value: Z) -> IRValue where Z: SignedInteger {
+    IntType.int64.constant(value)
+  }
+
+  /// Returns a constant of type `i64`.
+  private func i64<Z>(_ value: Z) -> IRValue where Z: UnsignedInteger {
     IntType.int64.constant(value)
   }
 

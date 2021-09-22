@@ -34,6 +34,7 @@ public struct Token {
     case `if`
     case `in`
     case `inout`
+    case `as`
     case int
     case float
     case comma

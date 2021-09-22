@@ -135,6 +135,53 @@ struct Runtime {
     return fn
   }
 
+  /// The runtime's `exist_drop(container)` function.
+  var existDrop: Function {
+    if let fn = emitter.module.function(named: "mvs_exist_drop") {
+      return fn
+    }
+
+    let ty = FunctionType([emitter.existentialType.ptr], VoidType())
+    let fn = emitter.builder.addFunction("mvs_exist_drop", type: ty)
+    fn.addAttribute(.nounwind , to: .function)
+    fn.addAttribute(.nocapture, to: .argument(0))
+    fn.addAttribute(.readonly , to: .argument(0))
+    return fn
+  }
+
+  /// The runtime's `exist_copy(dst, src)` function.
+  var existCopy: Function {
+    if let fn = emitter.module.function(named: "mvs_exist_copy") {
+      return fn
+    }
+
+    let existPtr = emitter.existentialType.ptr
+    let ty = FunctionType([existPtr, existPtr], VoidType())
+    let fn = emitter.builder.addFunction("mvs_exist_copy", type: ty)
+    fn.addAttribute(.nounwind , to: .function)
+    fn.addAttribute(.nocapture, to: .argument(0))
+    fn.addAttribute(.nocapture, to: .argument(1))
+    fn.addAttribute(.readonly , to: .argument(1))
+    return fn
+  }
+
+  /// The runtime's `exist_equal(lhs, rhs)` function.
+  var existEqual: Function {
+    if let fn = emitter.module.function(named: "mvs_exist_equal") {
+      return fn
+    }
+
+    let existPtr = emitter.existentialType.ptr
+    let ty = FunctionType([existPtr, existPtr], IntType.int64)
+    let fn = emitter.builder.addFunction("mvs_exist_equal", type: ty)
+    fn.addAttribute(.nounwind , to: .function)
+    fn.addAttribute(.nocapture, to: .argument(0))
+    fn.addAttribute(.readonly , to: .argument(0))
+    fn.addAttribute(.nocapture, to: .argument(1))
+    fn.addAttribute(.readonly , to: .argument(1))
+    return fn
+  }
+
   /// The runtime's `sqrt` function.
   var sqrt: Function {
     if let fn = emitter.module.function(named: "mvs_sqrt") {

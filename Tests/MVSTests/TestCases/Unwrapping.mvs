@@ -1,0 +1,6 @@
+struct Foo {
+  var x: Any
+  var y: Int
+} in
+let a = Foo(1 as Any, 2) in
+(((a as Any) as Foo).x as Int) + a.y // #!output 3
