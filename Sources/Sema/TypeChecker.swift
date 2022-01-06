@@ -596,19 +596,22 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     if let pair = gamma[path.name] {
       path.type = pair.type
       path.mutability = pair.mutability
+      return (path.mutability!, path.type!)
     }
 
     // Check for built-in symbols.
-    else if path.name == "uptime" {
+    path.mutability = .let
+    switch path.name {
+    case "uptime":
       path.type = .func(params: [], output: .float)
-      path.mutability = .let
-    } else if path.name == "sqrt" {
-      path.type = .func(params: [.float], output: .float)
-      path.mutability = .let
-    }
 
-    // Handle errors.
-    else {
+    case "sqrt":
+      path.type = .func(params: [.float], output: .float)
+
+    case "imod":
+      path.type = .func(params: [.int, .int], output: .int)
+
+    default:
       if path.name == "_" {
         diagConsumer.consume(.invalidUseOfUnderscore(range: path.range))
       } else {
@@ -616,7 +619,6 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       }
 
       path.type = .error
-      path.mutability = .let
     }
 
     return (path.mutability!, path.type!)
