@@ -406,6 +406,35 @@ public struct CondExpr: Expr {
 
 }
 
+/// A while expression.
+public struct WhileExpr: Expr {
+
+  public var range: SourceRange
+
+  public var type: Type?
+
+  /// The condition of the loop.
+  public var cond: Expr
+
+  /// The body of the loop.
+  public var body: Expr
+
+  /// The continuation of the loop.
+  public var tail: Expr
+
+  public init(cond: Expr, body: Expr, tail: Expr, range: SourceRange) {
+    self.cond = cond
+    self.body = body
+    self.tail = tail
+    self.range = range
+  }
+
+  public mutating func accept<V>(_ visitor: inout V) -> V.ExprResult where V: ExprVisitor {
+    visitor.visit(&self)
+  }
+
+}
+
 /// A cast expression.
 public struct CastExpr: Expr {
 

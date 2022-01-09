@@ -33,6 +33,7 @@ public struct Token {
     case fun
     case `if`
     case `in`
+    case `while`
     case `inout`
     case `as`
     case int

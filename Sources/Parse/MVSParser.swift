@@ -277,6 +277,7 @@ public struct MVSParser {
     .or(funcBindingExpr)
     .or(funcExpr)
     .or(condExpr)
+    .or(whileExpr)
     .or(operExpr)
     .or((take(.lParen) << expr) >> take(.rParen))
 
@@ -371,6 +372,19 @@ public struct MVSParser {
         succ: succ,
         fail: fail,
         range: head.range ..< fail.range)
+    })
+
+  lazy var whileExpr = take(.while)
+    .then(expr)
+    .then((take(.lBrace) << expr) >> take(.rBrace))
+    .then(take(.in) << expr)
+    .map({ tree -> Expr in
+      let (((head, cond), body), tail) = tree
+      return WhileExpr(
+        cond: cond,
+        body: body,
+        tail: tail,
+        range: head.range ..< tail.range)
     })
 
   lazy var operExpr = cmpOperExpr.or(addOperExpr).or(mulOperExpr)

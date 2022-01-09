@@ -1779,6 +1779,28 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
   }
 
+  public mutating func visit(_ expr: inout WhileExpr) -> IRValue {
+    let fun = builder.currentFunction!
+    let headBlock = fun.appendBasicBlock(named: "head")
+    let bodyBlock = fun.appendBasicBlock(named: "body")
+    let tailBlock = fun.appendBasicBlock(named: "tail")
+
+    // Emit the head of the loop condition.
+    builder.buildBr(headBlock)
+    builder.positionAtEnd(of: headBlock)
+    let cond = builder.buildTrunc(expr.cond.accept(&self), type: IntType.int1)
+    builder.buildCondBr(condition: cond, then: bodyBlock, else: tailBlock)
+
+    // Emit the body of the loop.
+    builder.positionAtEnd(of: bodyBlock)
+    emit(drop: expr.body.accept(&self), type: expr.body.type!)
+    builder.buildBr(headBlock)
+
+    // Emit the tail of the loop.
+    builder.positionAtEnd(of: tailBlock)
+    return expr.tail.accept(&self)
+  }
+
   public mutating func visit(_ expr: inout CastExpr) -> ExprResult {
     // If both the value and the signature have the same type, there's nothing to do.
     if expr.value.type == expr.sign.type {

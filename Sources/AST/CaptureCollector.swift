@@ -89,6 +89,12 @@ struct CaptureCollector: ExprVisitor {
       .merging(expr.fail.accept(&self), uniquingKeysWith: merge(lhs:rhs:))
   }
 
+  mutating func visit(_ expr: inout WhileExpr) -> ExprResult {
+    return expr.cond.accept(&self)
+      .merging(expr.body.accept(&self), uniquingKeysWith: merge(lhs:rhs:))
+      .merging(expr.tail.accept(&self), uniquingKeysWith: merge(lhs:rhs:))
+  }
+
   mutating func visit(_ expr: inout CastExpr) -> ExprResult {
     return expr.value.accept(&self)
   }
