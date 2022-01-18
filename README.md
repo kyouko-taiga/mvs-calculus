@@ -50,3 +50,7 @@ Examples/Factorial
 ```
 
 Run `mvs --help` for an overview of the compiler's options.
+
+## Publications
+
+- Dimitri Racordon, Denys Shabalin, Daniel Zheng, Dave Abrahams and Brennan Saeta. **Implementation Strategies for Mutable Value Semantics**, Journal of Object Technology ([preprint](Docs/mvs-implementation-strategies.pdf))
